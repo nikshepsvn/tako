@@ -99,7 +99,7 @@ private let toolDefinitions: [[String: Any]] = [
             "type": "object",
             "properties": [
                 "terminal": ["type": "string", "description": "Label, e.g. \"@web\""],
-                "lines": ["type": "integer", "description": "How many lines from the bottom (default 80, max 400)"],
+                "lines": ["type": "integer", "description": "How many lines from the bottom (default 80, max 2000)"],
             ],
             "required": ["terminal"],
         ],
@@ -204,9 +204,13 @@ leaving or are on their phone ("phone mode on"), call phone_mode on; when they'r
 In Phone Mode you are the user's control center for every agent on this Mac, Claude and Codex alike: they talk \
 only to you, from their phone. Tako messages you the moment an agent waits, finishes, fails or exits; tell the \
 user right away, always naming the agent (@api) so they can answer or tag it, and say in one line what it needs. \
-Act on their answer with your tools: answer_prompt for a permission or plan, choose_option for a multiple-choice \
-question, trust_folder (after they say yes) for a folder, sign_in for a signed-out agent (send them the link and \
-code), interrupt_agent to stop one, send_message for anything in words. When they tag an agent ("@web run the \
+Act on their answer with your tools: answer_prompt for a permission or plan, choose_option for any numbered \
+menu, trust_folder (after they say yes) for a folder, sign_in for a signed-out agent (send them the link and \
+code), interrupt_agent to stop one, set_mode to change its permission mode, restart_agent for a stuck or exited \
+one, send_message for anything in words. You have the user's hands too: press_keys presses any keys and \
+type_text types without your "Message from" framing, so drive a terminal as they would when no other tool \
+fits. These tools return the screen afterwards: check it, and keep going until the agent is doing what the \
+user asked. If send_message says a dialog is in the way, answer the dialog. When they tag an agent ("@web run the \
 tests"), send_message it and tell them when it's done. When they ask what's going on, list_terminals and answer \
 one line per agent. A message from Tako saying an agent is STILL waiting means the user hasn't seen it: send them \
 a push notification. Approve a risky request only after they say yes to that exact request (user_approved true). \
@@ -371,9 +375,9 @@ private let sumiToolDefinitions: [[String: Any]] = toolDefinitions.filter {
             "type": "object",
             "properties": [
                 "terminal": ["type": "string", "description": "Label, e.g. \"@api\""],
-                "answer": ["type": "string", "enum": ["approve", "deny"]],
+                "answer": ["type": "string", "enum": ["approve", "always", "deny"], "description": "always: approve and don't ask again for this kind of request (Phone Mode, with user_approved)"],
                 "text": ["type": "string", "description": "With deny: why, which the agent sees"],
-                "user_approved": ["type": "boolean", "description": "Phone Mode only: the user said yes to this exact risky request on their phone"],
+                "user_approved": ["type": "boolean", "description": "Phone Mode only: the user said yes to this exact risky request, or to \"always\", on their phone"],
             ],
             "required": ["terminal", "answer"],
         ],
@@ -389,14 +393,65 @@ private let sumiToolDefinitions: [[String: Any]] = toolDefinitions.filter {
     ],
     [
         "name": "choose_option",
-        "description": "Answer an agent's multiple-choice question (Claude's AskUserQuestion, Codex's own menus) by picking an option. Tako's message lists the options with numbers. In Phone Mode this works on any agent; otherwise only on sessions you handle (handle_waiting). Pick only what the user said, or what is clearly right for the task when they asked you to decide.",
+        "description": "Pick an option in whatever numbered menu an agent shows: AskUserQuestion, a permission menu (1. Yes / 2. Yes, don't ask again / 3. No), plan approval, /model, Codex menus. Tako's message or read_terminal shows the numbers. For a form with several questions, pass options, one number per question in order. Returns the screen afterwards. In Phone Mode this works on any agent; otherwise only on sessions you handle (handle_waiting). Pick only what the user said, or what is clearly right for the task when they asked you to decide.",
         "inputSchema": [
             "type": "object",
             "properties": [
                 "terminal": ["type": "string", "description": "Label, e.g. \"@api\""],
                 "option": ["type": "integer", "description": "The option's number, starting at 1"],
+                "options": ["type": "array", "items": ["type": "integer"], "description": "Instead of option: one number per question of a form, in order"],
+                "user_approved": ["type": "boolean", "description": "The user said yes to the risky request this menu approves"],
             ],
-            "required": ["terminal", "option"],
+            "required": ["terminal"],
+        ],
+    ],
+    [
+        "name": "press_keys",
+        "description": "Press keys in an agent's terminal exactly as the user would at the keyboard, then see the screen. Use for anything the other tools don't cover: moving through menus (up, down, enter), toggling a multi-select (space), leaving a dialog (esc), cycling Claude's mode (shift-tab), Codex shortcuts, autocomplete (tab). Names: enter, esc, tab, shift-tab, space, backspace, delete, up, down, left, right, home, end, pageup, pagedown, a single letter or digit, or ctrl-/shift-/alt- with one of those (ctrl-c, ctrl-r). Never ctrl-c twice in a row: that quits Claude. Same rules as choose_option.",
+        "inputSchema": [
+            "type": "object",
+            "properties": [
+                "terminal": ["type": "string", "description": "Label, e.g. \"@api\""],
+                "keys": ["type": "array", "items": ["type": "string"], "description": "Pressed in order, e.g. [\"down\", \"down\", \"enter\"]"],
+                "user_approved": ["type": "boolean", "description": "The user said yes to the risky request these keys approve"],
+            ],
+            "required": ["terminal", "keys"],
+        ],
+    ],
+    [
+        "name": "type_text",
+        "description": "Type into an agent's terminal as the user would, without the \"Message from @sumi\" framing send_message adds: a slash command (/model, /compact), the free-text answer of a question's \"Other\" field, or a reply in the user's own words. submit false leaves it in the input box. Returns the screen afterwards. Same rules as choose_option.",
+        "inputSchema": [
+            "type": "object",
+            "properties": [
+                "terminal": ["type": "string", "description": "Label, e.g. \"@api\""],
+                "text": ["type": "string"],
+                "submit": ["type": "boolean", "description": "Press Enter after (default true)"],
+                "user_approved": ["type": "boolean", "description": "The user said yes to this: needed for a \"!\" shell command, or text answering a risky request"],
+            ],
+            "required": ["terminal", "text"],
+        ],
+    ],
+    [
+        "name": "set_mode",
+        "description": "Change an agent's permission mode: supervised (asks first), acceptEdits, plan, or fullAccess (never asks). Claude switches in place with Shift-Tab when it can; Codex, or a Claude that didn't start able to skip permissions, relaunches on the same conversation (a turn in progress stops). Same rules as choose_option.",
+        "inputSchema": [
+            "type": "object",
+            "properties": [
+                "terminal": ["type": "string", "description": "Label, e.g. \"@api\""],
+                "mode": ["type": "string", "enum": ["supervised", "acceptEdits", "plan", "fullAccess"]],
+                "user_approved": ["type": "boolean", "description": "Needed for fullAccess: the user asked for it"],
+            ],
+            "required": ["terminal", "mode"],
+        ],
+    ],
+    [
+        "name": "restart_agent",
+        "description": "Quit and relaunch an agent on the same conversation: for one that's stuck, exited, or needs new settings. A turn in progress stops. Same rules as choose_option.",
+        "inputSchema": [
+            "type": "object",
+            "properties": ["terminal": ["type": "string", "description": "Label, e.g. \"@api\""]],
+            "required": ["terminal"],
         ],
     ],
     [
@@ -422,10 +477,13 @@ private let sumiToolDefinitions: [[String: Any]] = toolDefinitions.filter {
     ],
     [
         "name": "interrupt_agent",
-        "description": "Stop an agent's current turn, as pressing Esc in its terminal does. Use when the user says stop, or it is clearly going wrong; then send_message it what to do instead.",
+        "description": "Stop an agent's current turn, or back out of a dialog it shows, as pressing Esc in its terminal does. hard presses Ctrl-C instead, for a command that ignores Esc. Use when the user says stop, or it is clearly going wrong; then send_message it what to do instead.",
         "inputSchema": [
             "type": "object",
-            "properties": ["terminal": ["type": "string", "description": "Label, e.g. \"@api\""]],
+            "properties": [
+                "terminal": ["type": "string", "description": "Label, e.g. \"@api\""],
+                "hard": ["type": "boolean", "description": "Ctrl-C instead of Esc"],
+            ],
             "required": ["terminal"],
         ],
     ],
@@ -465,7 +523,7 @@ private func callTool(_ name: String, _ arguments: [String: Any], sessionID: Str
     case "read_terminal":
         req = ControlRequest(cmd: .read)
         req.target = arguments["terminal"] as? String
-        req.lines = min((arguments["lines"] as? Int) ?? 80, 400)
+        req.lines = min((arguments["lines"] as? Int) ?? 80, 2000)
     case "set_status":
         req = ControlRequest(cmd: .status)
         req.text = arguments["text"] as? String
@@ -556,7 +614,31 @@ private func callTool(_ name: String, _ arguments: [String: Any], sessionID: Str
         req = ControlRequest(cmd: .act)
         req.text = "choose"
         req.target = arguments["terminal"] as? String
-        req.count = arguments["option"] as? Int
+        req.options = (arguments["options"] as? [Int]) ?? (arguments["option"] as? Int).map { [$0] }
+        req.userApproved = arguments["user_approved"] as? Bool
+    case "press_keys":
+        req = ControlRequest(cmd: .act)
+        req.text = "keys"
+        req.target = arguments["terminal"] as? String
+        req.keys = arguments["keys"] as? [String]
+        req.userApproved = arguments["user_approved"] as? Bool
+    case "type_text":
+        req = ControlRequest(cmd: .act)
+        req.text = "type"
+        req.target = arguments["terminal"] as? String
+        req.label = arguments["text"] as? String
+        req.submit = arguments["submit"] as? Bool
+        req.userApproved = arguments["user_approved"] as? Bool
+    case "set_mode":
+        req = ControlRequest(cmd: .act)
+        req.text = "mode"
+        req.target = arguments["terminal"] as? String
+        req.mode = arguments["mode"] as? String
+        req.userApproved = arguments["user_approved"] as? Bool
+    case "restart_agent":
+        req = ControlRequest(cmd: .act)
+        req.text = "restart"
+        req.target = arguments["terminal"] as? String
     case "trust_folder":
         req = ControlRequest(cmd: .act)
         req.text = "trust"
@@ -570,6 +652,7 @@ private func callTool(_ name: String, _ arguments: [String: Any], sessionID: Str
         req = ControlRequest(cmd: .act)
         req.text = "interrupt"
         req.target = arguments["terminal"] as? String
+        req.hard = arguments["hard"] as? Bool
     case "phone_mode":
         req = ControlRequest(cmd: .phoneMode)
         req.text = (arguments["on"] as? Bool) == true ? "on" : "off"

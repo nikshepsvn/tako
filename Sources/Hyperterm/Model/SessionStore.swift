@@ -87,6 +87,9 @@ final class SessionStore: ObservableObject {
     private var reservedLabels: [String: Date] = [:]
     private var launchLabels = SessionLabelReservations()
     var approvals: [UUID: PendingApproval] = [:]
+    /// Permission requests that arrived while another was held (parallel tools, subagents): each
+    /// is held in turn once the one before it is answered.
+    var queuedApprovals: [UUID: [(approval: PendingApproval, json: [String: Any])]] = [:]
     /// Codex sessions' own app-servers, which Tako follows as a second client.
     var codexServers: [UUID: CodexAppServer] = [:]
     /// The app-server request behind each session's held approval, so the terminal answering
@@ -124,10 +127,23 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    /// Forgets a session's channel: its MCP server is gone (closed or restarted). Returns the
+    /// messages it never picked up.
+    @discardableResult
+    func dropChannel(for session: TerminalSession) -> [String] {
+        channelWaiters.removeValue(forKey: session.id)?(ControlResponse.success())
+        channelWaiterTokens[session.id] = nil
+        channelLastSeen[session.id] = nil
+        return channelInbox.removeValue(forKey: session.id) ?? []
+    }
+
     /// Pushes a message as a channel event when the session's channel is live. Returns false when
     /// the session has no channel, so the caller types the message instead.
     func pushViaChannel(_ text: String, to session: TerminalSession) -> Bool {
-        guard Self.channelsEnabled, session.kind == .claude,
+        // A poller from before a restart, sleep or exit can look fresh for a minute while its
+        // socket is already gone: only a running agent's channel counts.
+        if case .exited = session.state { return false }
+        guard Self.channelsEnabled, session.kind == .claude, !session.isAsleep, session.state != .starting,
               let seen = channelLastSeen[session.id], Date().timeIntervalSince(seen) < 60 else { return false }
         if let waiter = channelWaiters.removeValue(forKey: session.id) {
             var response = ControlResponse.success()
@@ -442,7 +458,10 @@ final class SessionStore: ObservableObject {
     }
 
     func close(_ session: TerminalSession) {
-        dropApproval(for: session)
+        // An agent's browsers are its tools: left behind they'd become loose tiles, each holding
+        // a Chromium renderer.
+        if session.kind.isAgent { browsers(ownedBy: session).forEach(close) }
+        dropAllApprovals(for: session)
         rememberClosed(session)
         if session.spec.labelSource == .user || session.spec.labelSource == nil {
             reservedLabels[session.label] = Date()
@@ -459,10 +478,7 @@ final class SessionStore: ObservableObject {
         session.terminate()
         codexServers.removeValue(forKey: session.id)?.close()
         codexHeldRequests[session.id] = nil
-        channelWaiters.removeValue(forKey: session.id)?(ControlResponse.success())
-        channelWaiterTokens[session.id] = nil
-        channelInbox[session.id] = nil
-        channelLastSeen[session.id] = nil
+        dropChannel(for: session)
         sessions.removeAll { $0.id == session.id }
         forgetOverlaps(with: session)
         childCancellables[session.id] = nil

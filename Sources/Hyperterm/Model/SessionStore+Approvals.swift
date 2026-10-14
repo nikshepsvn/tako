@@ -20,7 +20,6 @@ extension SessionStore {
         }
         let input = json["tool_input"] as? [String: Any] ?? [:]
         let summary = AgentText.describeTool(name: tool, input: input, cwd: json["cwd"] as? String)
-        dropApproval(for: session)
         let approval = PendingApproval(source: source, toolName: tool, summary: summary,
                                        request: RiskyRequest.text(tool: tool, input: input),
                                        suggestions: json["permission_suggestions"], reply: reply)
@@ -29,6 +28,26 @@ extension SessionStore {
             session.record(.approval, "Allowed \(summary) (Phone Mode)")
             return
         }
+        // One held at a time; a second waits its turn instead of pushing the first out of Tako.
+        if approvals[session.id] != nil {
+            queuedApprovals[session.id, default: []].append((approval, json))
+            session.record(.approval, "Also asked to run \(summary) (next in line)")
+            let id = approval.id
+            DispatchQueue.main.asyncAfter(deadline: .now() + 540) { [weak self] in
+                guard let self, var queue = self.queuedApprovals[session.id],
+                      let index = queue.firstIndex(where: { $0.approval.id == id }) else { return }
+                queue.remove(at: index).approval.reply(ControlResponse.success())
+                self.queuedApprovals[session.id] = queue.isEmpty ? nil : queue
+            }
+            return
+        }
+        hold(approval, json: json, for: session)
+    }
+
+    private func hold(_ approval: PendingApproval, json: [String: Any], for session: TerminalSession) {
+        let tool = approval.toolName
+        let summary = approval.summary
+        let input = json["tool_input"] as? [String: Any] ?? [:]
         approvals[session.id] = approval
         session.hasHookApproval = true
         session.heldToolCall = HeldToolCall(json: json)
@@ -44,8 +63,10 @@ extension SessionStore {
             notifier.postApproval(session: session, request: summary, alwaysRule: alwaysRuleText(approval))
         }
         // Leave headroom under the hook's 600 s timeout so the CLI's own prompt takes over cleanly.
+        // Counted from when the hook started: one that waited in line has less left.
         let id = approval.id
-        DispatchQueue.main.asyncAfter(deadline: .now() + 540) { [weak self, weak session] in
+        let left = max(5, 540 - Date().timeIntervalSince(approval.createdAt))
+        DispatchQueue.main.asyncAfter(deadline: .now() + left) { [weak self, weak session] in
             guard let self, let session, self.approvals[session.id]?.id == id else { return }
             self.dropApproval(for: session)
         }
@@ -79,6 +100,7 @@ extension SessionStore {
     }
 
     /// Releases a held hook with no decision, so the CLI's own prompt (or its outcome) stands.
+    /// The next request in line, if any, is held once the CLI has moved on from this one.
     func dropApproval(for session: TerminalSession) {
         guard let approval = approvals.removeValue(forKey: session.id) else { return }
         session.hasHookApproval = false
@@ -86,6 +108,25 @@ extension SessionStore {
         session.pendingPlan = nil
         approval.reply(ControlResponse.success())
         notifier.clearApproval(session: session)
+        holdNextApproval(for: session)
+    }
+
+    /// Releases every request held or in line: the agent is restarting or closing.
+    func dropAllApprovals(for session: TerminalSession) {
+        queuedApprovals.removeValue(forKey: session.id)?.forEach { $0.approval.reply(ControlResponse.success()) }
+        dropApproval(for: session)
+    }
+
+    /// After a beat, so keys meant for the dialog just released land there first.
+    private func holdNextApproval(for session: TerminalSession) {
+        guard queuedApprovals[session.id]?.isEmpty == false else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self, weak session] in
+            guard let self, let session, self.approvals[session.id] == nil,
+                  var queue = self.queuedApprovals[session.id], !queue.isEmpty else { return }
+            let next = queue.removeFirst()
+            self.queuedApprovals[session.id] = queue.isEmpty ? nil : queue
+            self.hold(next.approval, json: next.json, for: session)
+        }
     }
 
     func alwaysRuleText(for session: TerminalSession) -> String? {

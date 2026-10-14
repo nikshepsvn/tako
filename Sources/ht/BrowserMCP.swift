@@ -52,6 +52,9 @@ private final class BrowserProxy: @unchecked Sendable {
     private var pageScopedTools: Set<String> = []
 
     private var hiddenCounter = 0
+    /// chrome-devtools-mcp idle this long is stopped; the next tool call starts it again.
+    private var lastActivity = Date()
+    private static let idleLimit: TimeInterval = 600
     private var mapRefreshedAt = Date.distantPast
 
     private enum Rewrite { case initialize, toolsList, listPages }
@@ -77,9 +80,21 @@ private final class BrowserProxy: @unchecked Sendable {
             source.resume()
             sources.append(source)
         }
+        let idle = DispatchSource.makeTimerSource(queue: .global())
+        idle.schedule(deadline: .now() + 60, repeating: 60)
+        idle.setEventHandler { [self] in
+            let process = withState { () -> Process? in
+                guard let child = self.child, self.pending.isEmpty, self.hiddenWaiters.isEmpty,
+                      Date().timeIntervalSince(self.lastActivity) > Self.idleLimit else { return nil }
+                return child
+            }
+            if let process { stopServer(process) }
+        }
+        idle.resume()
         while let line = readLine(strippingNewline: false) {
             handleAgentLine(line, capture: capture)
         }
+        idle.cancel()
         shutDown()
     }
 
@@ -380,6 +395,7 @@ private final class BrowserProxy: @unchecked Sendable {
         let key = mcpRequestKey(id)
         let registered = withState { () -> Bool in
             guard self.child != nil else { return false }
+            self.lastActivity = Date()
             self.pending[key] = id
             return true
         }
@@ -402,6 +418,8 @@ private final class BrowserProxy: @unchecked Sendable {
         var req = ControlRequest(cmd: .browser)
         req.from = callerSession
         req.text = tool
+        // Tako keeps the tab being driven awake.
+        req.target = withState { self.activeLabel }
         if let moved = withState({ () -> String? in
             defer { self.movedEndpoint = nil }
             return self.movedEndpoint
@@ -495,6 +513,7 @@ private final class BrowserProxy: @unchecked Sendable {
         defer { free(buffer); fclose(stream) }
         while getline(&buffer, &capacity, stream) > 0, let buffer {
             let line = String(cString: buffer)
+            withState { self.lastActivity = Date() }
             handleServerLine(line)
         }
     }

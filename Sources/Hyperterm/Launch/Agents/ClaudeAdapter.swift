@@ -37,7 +37,27 @@ struct ClaudeAdapter: AgentAdapter {
         // statusLine feeds cost/context/rate limits to Tako, then prints the user's own
         // statusline unchanged (`ht statusline` runs it).
         let statusLine: [String: Any] = ["type": "command", "command": "\(htPath) statusline", "padding": 0]
-        return AgentIntegration.json(["hooks": hooks, "permissions": ["allow": allow], "statusLine": statusLine])
+        var settings: [String: Any] = ["hooks": hooks, "permissions": ["allow": allow], "statusLine": statusLine]
+        if !AgentBrowser.agentsMayUseOutsideChrome, !duplicateBrowserPlugins().isEmpty {
+            settings["enabledPlugins"] = Dictionary(uniqueKeysWithValues: duplicateBrowserPlugins().map { ($0, false) })
+        }
+        return AgentIntegration.json(settings)
+    }
+
+    /// Plugins that start their own Chrome automation server in every agent (one node process
+    /// tree each), doing what Tako's `browser` server already does in Tako's browser. Turned off
+    /// for agents Tako starts, as --no-chrome turns off Claude in Chrome; the user's own Claude
+    /// sessions keep them.
+    static let browserPluginNames: Set<String> = ["chrome-devtools-mcp", "playwright"]
+
+    static func duplicateBrowserPlugins(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> [String] {
+        let file = home.appendingPathComponent(".claude/settings.json")
+        guard let data = try? Data(contentsOf: file),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let plugins = json["enabledPlugins"] as? [String: Any] else { return [] }
+        return plugins.keys.filter { key in
+            (plugins[key] as? Bool) == true && browserPluginNames.contains(String(key.split(separator: "@").first ?? ""))
+        }.sorted()
     }
 
     private static func mcpConfig() -> String {
@@ -89,10 +109,16 @@ struct ClaudeAdapter: AgentAdapter {
 
     func launchCommand(for spec: LaunchSpec, resume: Bool, options: String, extra: String, prompt: String) -> String {
         var args = "--name \(shellQuote(spec.label))"
+        var enter = ""
         // An id given up front has no conversation until the first message (say the agent quit
         // at the folder-trust prompt); resuming it fails, so it starts fresh under the same id.
         if resume, let id = spec.agentSessionId, isSafeIdentifier(id), Self.conversationExists(spec, id) {
             args += " --resume \(shellQuote(id))"
+            // Claude finds the conversation from the repo root, but then works there: a worktree
+            // agent would edit the main checkout. Resume from inside its worktree instead.
+            if spec.worktreeName != nil, FileManager.default.fileExists(atPath: spec.workPath) {
+                enter = "cd \(shellQuote(spec.workPath)) && "
+            }
         } else if let parent = spec.forkOf, isSafeIdentifier(parent) {
             // A fork continues the parent's conversation under a new session id; the parent
             // is untouched. Claude finds conversations by folder, so a fork starts in the
@@ -103,7 +129,7 @@ struct ClaudeAdapter: AgentAdapter {
             if let id = spec.agentSessionId, UUID(uuidString: id) != nil { args += " --session-id \(shellQuote(id))" }
             if let worktree = spec.worktreeName { args += " --worktree \(shellQuote(worktree))" }
         }
-        return "\(wrapper) \(args)\(options)\(extra)\(prompt)\n"
+        return "\(enter)\(wrapper) \(args)\(options)\(extra)\(prompt)\n"
     }
 
     func arguments(for options: AgentOptions) -> [String] {

@@ -42,6 +42,9 @@ struct MachineStatus: Codable, Equatable {
     var heavySlotsTotal: Int
     var heavyWaiting: Int
     var sessions: [Session]
+    /// Tako's Chromium, shared by every browser tile.
+    var browserProcesses = 0
+    var browserBytes: UInt64 = 0
 }
 
 /// Keeps the Mac responsive while agents run, without an LLM: measures each session's process
@@ -356,11 +359,15 @@ final class Steward: ObservableObject {
                                          cpuPercent: sample.cpuPercent, lowered: sample.lowered,
                                          escalation: escalations.first { $0.sessionID == key })
         }
-        return MachineStatus(pressure: MemoryPressure.current(), thermal: Thermal(ProcessInfo.processInfo.thermalState),
+        let browser = ProcessUsage.browserProcesses()
+        var status = MachineStatus(pressure: MemoryPressure.current(), thermal: Thermal(ProcessInfo.processInfo.thermalState),
                              lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled,
                              freeBytes: HostMemory.availableBytes(), totalBytes: HostMemory.totalBytes,
                              admissionOK: canLaunchAgent(), queuedLaunches: launches.count,
                              heavySlotsUsed: heavy.holders.count, heavySlotsTotal: heavy.capacity,
                              heavyWaiting: heavy.waiting, sessions: sessions)
+        status.browserProcesses = browser.count
+        status.browserBytes = browser.footprint
+        return status
     }
 }

@@ -152,7 +152,8 @@ extension SessionStore {
     func sumiTakesWait(_ session: TerminalSession, reason: String, now: Date = Date()) -> Bool {
         guard var delegation = session.delegation, let sumi, !sumi.isExitedProcess else { return false }
         guard isPhoneModeOn || !TerminalSession.isUsersOwn(reason) else {
-            session.record(.note, reason == TerminalSession.trustReason ? "Left for you: trusting a folder is your call" : "Left for you: signing in is your call")
+            session.record(.note, reason == TerminalSession.trustReason ? "Left for you: trusting a folder is your call"
+                : reason == TerminalSession.startupScreenReason ? "Left for you: Claude's startup screen" : "Left for you: signing in is your call")
             return false
         }
         delegation.toldAt = now
@@ -227,8 +228,8 @@ extension SessionStore {
     /// approved once the user OK'd it there (`userApproved`).
     func answerForSumi(_ session: TerminalSession, _ answer: PromptAnswer, reason: String?,
                             userApproved: Bool = false) -> Result<String, DelegationError> {
-        guard answer != .always else {
-            return .failure(DelegationError("never \"always\": approve or deny this one request"))
+        guard answer != .always || (phoneModeSince != nil && userApproved) else {
+            return .failure(DelegationError("\"always\" needs the user's yes: in Phone Mode, ask them and pass user_approved true; otherwise approve or deny this one request"))
         }
         guard session.delegation != nil else {
             return .failure(DelegationError("@\(session.label) isn't handed to you; take over a session's waits with handle_waiting only when the user asks"))
@@ -249,7 +250,7 @@ extension SessionStore {
         }
         let request = approval?.request ?? pending ?? waiting
         let summary = approval?.summary ?? waiting
-        if answer == .approve, let why = RiskyRequest.reason(tool: approval?.toolName, request: request, workspace: session.spec.workPath) {
+        if answer != .deny, let why = RiskyRequest.reason(tool: approval?.toolName, request: request, workspace: session.spec.workPath) {
             if phoneModeSince != nil {
                 guard userApproved else {
                     return .failure(DelegationError("\(why): ask the user on their phone about exactly this request (\(summary)); "
@@ -264,7 +265,7 @@ extension SessionStore {
         let denial = answer == .deny ? (reason ?? "Sumi denied this on the user's behalf.") : nil
         switch self.answer(session, answer, reason: denial) {
         case .success(let done):
-            session.record(.note, "Sumi answered: " + (answer == .deny ? "denied " : "allowed ") + summary)
+            session.record(.note, "Sumi answered: " + (answer == .deny ? "denied " : answer == .always ? "always allowed " : "allowed ") + summary)
             return .success("\(done) @\(session.label): \(summary)")
         case .failure(let error):
             return .failure(DelegationError(error.description))
@@ -283,26 +284,45 @@ extension SessionStore {
         return nil
     }
 
-    /// choose_option: picks option `number` (1-based) of the question the agent is asking.
-    func chooseForSumi(_ session: TerminalSession, option number: Int,
+    /// choose_option: picks option `number` (1-based) of the question the agent is asking. A
+    /// question the hook described is answered through it; any other numbered menu on screen
+    /// (permission menus, plan approval, /model, forms) gets the keys a person would press.
+    /// Several numbers answer a form one question at a time.
+    func chooseForSumi(_ session: TerminalSession, options numbers: [Int], userApproved: Bool = false,
                        completion: @escaping (Result<String, DelegationError>) -> Void) {
         if let refusal = sumiMayAct(on: session) { return completion(.failure(refusal)) }
-        guard let question = session.pendingQuestion, question.mode == .options else {
-            return completion(.failure(DelegationError("@\(session.label) isn't asking a question with options; read_terminal it, and send_message to answer in words")))
-        }
-        let options = question.items[0].options
-        guard options.indices.contains(number - 1) else {
-            return completion(.failure(DelegationError("option must be 1–\(options.count)")))
-        }
-        let label = options[number - 1].label
-        answerQuestion(session, option: number - 1) { result in
-            switch result {
-            case .success:
-                session.record(.note, "Sumi answered: \(label)")
-                completion(.success("answered @\(session.label): \(label)"))
-            case .failure(let error):
-                completion(.failure(DelegationError(error.description)))
+        guard let first = numbers.first else { return completion(.failure(DelegationError("option is required"))) }
+        if numbers.count == 1, let question = session.pendingQuestion, question.mode == .options, question.items.count == 1 {
+            let options = question.items[0].options
+            guard options.indices.contains(first - 1) else {
+                return completion(.failure(DelegationError("option must be 1–\(options.count)")))
             }
+            let label = options[first - 1].label
+            return answerQuestion(session, option: first - 1) { result in
+                switch result {
+                case .success:
+                    session.record(.note, "Sumi answered: \(label)")
+                    completion(.success("answered @\(session.label): \(label)"))
+                case .failure(let error):
+                    completion(.failure(DelegationError(error.description)))
+                }
+            }
+        }
+        let screen = session.surface.readViewport()
+        let menu = PromptScreen.menu(screen)
+        guard !menu.isEmpty else {
+            return completion(.failure(DelegationError("@\(session.label) has no numbered menu on screen; read_terminal it, then press_keys or type_text")))
+        }
+        guard let option = menu.first(where: { $0.number == first }) else {
+            return completion(.failure(DelegationError("option must be one of \(menu.map { String($0.number) }.joined(separator: ", "))")))
+        }
+        if let refusal = riskyOnScreen(session, approving: !option.text.lowercased().hasPrefix("no"), userApproved: userApproved) {
+            return completion(.failure(refusal))
+        }
+        let keys = numbers.flatMap { PromptScreen.keys(toOption: $0, screen: screen, kind: session.kind) }
+        pressAsUser(session, keys) { after in
+            session.record(.note, "Sumi chose: \(option.text)")
+            completion(.success("chose \(option.text) on @\(session.label)\n\(after)"))
         }
     }
 
@@ -338,13 +358,135 @@ extension SessionStore {
         }
     }
 
-    /// interrupt_agent: stops the agent's current turn, as Esc does in its terminal.
-    func interruptForSumi(_ session: TerminalSession) -> Result<String, DelegationError> {
+    /// interrupt_agent: Esc, as a person presses to stop a turn or back out of a dialog; `hard` is
+    /// Ctrl-C, for a command that ignores Esc. Once only: twice in a row quits Claude.
+    func interruptForSumi(_ session: TerminalSession, hard: Bool,
+                          completion: @escaping (Result<String, DelegationError>) -> Void) {
+        if let refusal = sumiMayAct(on: session) { return completion(.failure(refusal)) }
+        guard !session.isAsleep else { return completion(.failure(DelegationError("@\(session.label) is asleep; nothing to stop"))) }
+        if case .exited = session.state { return completion(.failure(DelegationError("@\(session.label) has exited; restart_agent it"))) }
+        pressAsUser(session, [hard ? "ctrl-c" : "esc"]) { after in
+            session.record(.note, hard ? "Stopped by Sumi (Ctrl-C)" : "Interrupted by Sumi")
+            completion(.success("interrupted @\(session.label)\n\(after)"))
+        }
+    }
+
+    // MARK: - Sumi at the keyboard
+
+    /// press_keys: any keys, as the user would press them, then what the screen shows. A risky
+    /// permission request on screen still needs the user's yes, as answer_prompt does.
+    func pressKeysForSumi(_ session: TerminalSession, keys: [String], userApproved: Bool,
+                          completion: @escaping (Result<String, DelegationError>) -> Void) {
+        if let refusal = sumiMayAct(on: session) { return completion(.failure(refusal)) }
+        guard !keys.isEmpty, keys.count <= 40 else { return completion(.failure(DelegationError("pass 1–40 keys"))) }
+        let unknown = keys.filter { NamedKey($0) == nil }
+        guard unknown.isEmpty else {
+            return completion(.failure(DelegationError("unknown key names: \(unknown.joined(separator: ", ")). Use enter, esc, tab, shift-tab, space, backspace, up, down, left, right, home, end, pageup, pagedown, a letter or digit, or ctrl-/shift-/alt- with one of those")))
+        }
+        if let refusal = riskyOnScreen(session, approving: true, userApproved: userApproved) { return completion(.failure(refusal)) }
+        pressAsUser(session, keys) { after in
+            session.record(.note, "Sumi pressed " + keys.joined(separator: " "))
+            completion(.success("pressed \(keys.joined(separator: " ")) on @\(session.label)\n\(after)"))
+        }
+    }
+
+    /// type_text: types into the agent as the user would, without "Message from @sumi": a free-text
+    /// answer, a slash command, or a draft left for the user (submit false).
+    func typeForSumi(_ session: TerminalSession, text: String, submit: Bool, userApproved: Bool = false,
+                     completion: @escaping (Result<String, DelegationError>) -> Void) {
+        if let refusal = sumiMayAct(on: session) { return completion(.failure(refusal)) }
+        let text = sanitizeMessage(text)
+        guard !text.isEmpty else { return completion(.failure(DelegationError("text is empty"))) }
+        // Claude runs "!…" as a shell command with no permission check; typed into a dialog, text
+        // can answer it. Both get the same yes from the user a risky request does.
+        if text.hasPrefix("!"), !userApproved {
+            return completion(.failure(DelegationError("\"!\" runs a shell command in @\(session.label) without a permission check: ask the user on their phone; if they say yes, call again with user_approved true")))
+        }
+        if session.dialogOnScreen, let refusal = riskyOnScreen(session, approving: true, userApproved: userApproved) {
+            return completion(.failure(refusal))
+        }
+        if case .exited = session.state { return completion(.failure(DelegationError("@\(session.label) has exited; restart_agent it"))) }
+        if session.isAsleep || session.state == .starting {
+            return completion(.success(session.deliver(text, submit: submit, from: nil)))
+        }
+        session.typeAsUser(text, submit: submit)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            session.record(.note, "Sumi typed: " + String(text.prefix(80)))
+            completion(.success("typed into @\(session.label)\n\(Self.screenTail(session))"))
+        }
+    }
+
+    /// restart_agent: quits and relaunches the agent on the same conversation.
+    func restartForSumi(_ session: TerminalSession) -> Result<String, DelegationError> {
         if let refusal = sumiMayAct(on: session) { return .failure(refusal) }
-        guard session.state == .working else { return .failure(DelegationError("@\(session.label) isn't working")) }
-        _ = session.surface.pressKey(named: "esc")
-        session.record(.note, "Interrupted by Sumi")
-        return .success("interrupted @\(session.label)")
+        session.restart()
+        session.record(.note, "Restarted by Sumi")
+        return .success("restarting @\(session.label) on the same conversation")
+    }
+
+    /// set_mode: Claude cycles modes with Shift-Tab, so Sumi presses it until the footer shows the
+    /// mode, as the user would. A mode the cycle doesn't offer (bypass, when Claude didn't start
+    /// with it) and Codex, whose mode is a launch flag, relaunch on the same conversation.
+    func setModeForSumi(_ session: TerminalSession, mode: PermissionMode, userApproved: Bool = false,
+                        completion: @escaping (Result<String, DelegationError>) -> Void) {
+        if let refusal = sumiMayAct(on: session) { return completion(.failure(refusal)) }
+        // Full Access stops every permission prompt for the rest of the session: the user's call.
+        guard mode != .fullAccess || userApproved else {
+            return completion(.failure(DelegationError("Full Access means @\(session.label) never asks again: ask the user; if they say yes, call again with user_approved true")))
+        }
+        var options = session.spec.options ?? AgentOptions()
+        options.mode = mode
+        session.spec.options = options
+        func relaunch() {
+            session.restart()
+            session.record(.note, "Sumi switched to \(mode.title) (relaunched)")
+            completion(.success("@\(session.label) relaunches in \(mode.title) on the same conversation"))
+        }
+        guard session.kind == .claude, !session.isAsleep, !session.dialogOnScreen,
+              PromptScreen.showsClaudePrompt(session.surface.readViewport()) else { return relaunch() }
+        func step(_ left: Int) {
+            if PromptScreen.claudeMode(session.surface.readViewport()) == mode {
+                session.record(.note, "Sumi switched to \(mode.title)")
+                return completion(.success("@\(session.label) is in \(mode.title)"))
+            }
+            guard left > 0 else { return relaunch() }
+            _ = session.surface.pressKey(named: "shift-tab")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { step(left - 1) }
+        }
+        step(6)
+    }
+
+    /// Presses keys a beat apart, as fingers do: TUIs drop or merge keys sent in one burst. A held
+    /// permission hook is let go first, so the CLI's own dialog is the one the keys land on.
+    private func pressAsUser(_ session: TerminalSession, _ keys: [String], then done: @escaping (String) -> Void) {
+        let held = approvals[session.id] != nil
+        if held { dropApproval(for: session) }
+        func press(_ index: Int) {
+            guard index < keys.count else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { done(Self.screenTail(session)) }
+                return
+            }
+            _ = session.surface.pressKey(named: keys[index])
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { press(index + 1) }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + (held ? 0.4 : 0)) { press(0) }
+    }
+
+    /// What Sumi sees after acting: the bottom of the screen, so it needn't read_terminal again.
+    static func screenTail(_ session: TerminalSession) -> String {
+        let lines = session.surface.readViewport().split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        let shown = lines.reversed().drop(while: \.isEmpty).reversed().suffix(20)
+        return "screen now:\n" + shown.joined(separator: "\n")
+    }
+
+    /// The risky-request guard for keys: approving a risky permission request needs the user's yes.
+    private func riskyOnScreen(_ session: TerminalSession, approving: Bool, userApproved: Bool) -> DelegationError? {
+        guard approving, !userApproved, case .needsInput(let waiting) = session.state else { return nil }
+        let approval = approvals[session.id]
+        let request = approval?.request ?? session.pendingRequest ?? waiting
+        guard let why = RiskyRequest.reason(tool: approval?.toolName, request: request, workspace: session.spec.workPath) else { return nil }
+        return DelegationError("@\(session.label) is asking about \(why) (\(approval?.summary ?? waiting)): ask the user on their phone; if they say yes, call again with user_approved true")
     }
 
     /// The normal needs-you, for a wait Sumi didn't take or left.
@@ -371,6 +513,8 @@ extension SessionStore {
                 + " (choose_option)"
         } else if reason == TerminalSession.trustReason {
             text += " · folder: \(abbreviateHome(session.spec.workPath)) (trust_folder once the user says yes)"
+        } else if reason == TerminalSession.startupScreenReason {
+            text += " (read_terminal it and tell the user what it asks; answer with choose_option or press_keys)"
         } else if reason.hasPrefix("Sign in to ") {
             text += " (sign_in gets a link and code for the user's phone)"
         } else if approvals[session.id] != nil || session.pendingRequest == reason {

@@ -519,6 +519,10 @@ struct SumiDigest {
     static let retryInterval: TimeInterval = 1
 
     private(set) var events: [SumiEvent] = []
+    /// Most events one digest carries: it is typed into Sumi as one message, and gathers for as
+    /// long as Sumi is busy.
+    static let cap = 50
+    private var dropped = 0
     private var since: Date?
     private var urgent = false
     /// Sumi is starting a fresh conversation; the digest waits for it.
@@ -529,7 +533,13 @@ struct SumiDigest {
     mutating func add(_ event: SumiEvent, urgent: Bool = false, at now: Date = Date()) {
         if events.isEmpty { since = now }
         if urgent { self.urgent = true }
+        // The same news about the same agent twice says nothing new: keep the latest.
+        events.removeAll { $0.label == event.label && $0.line == event.line }
         events.append(event)
+        if events.count > Self.cap {
+            dropped += events.count - Self.cap
+            events.removeFirst(events.count - Self.cap)
+        }
     }
 
     func isDue(at now: Date) -> Bool {
@@ -540,8 +550,9 @@ struct SumiDigest {
     /// The message for everything gathered so far; the digest starts over empty.
     mutating func take(cleared: Bool = false) -> String? {
         guard !events.isEmpty else { return nil }
-        defer { events = []; since = nil; urgent = false }
-        return Self.message(events, cleared: cleared)
+        defer { events = []; since = nil; urgent = false; dropped = 0 }
+        let older = dropped > 0 ? " (\(dropped) older updates left out; list_terminals for the current state)" : ""
+        return Self.message(events, cleared: cleared) + older
     }
 
     static func message(_ events: [SumiEvent], cleared: Bool = false) -> String {

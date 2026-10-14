@@ -38,6 +38,32 @@ extension SessionStore {
         (session.surface as? BrowserSurfaceView)?.goLive()
     }
 
+    /// How long a browser nobody can see stays open after its last use.
+    static let browserIdleLimit: TimeInterval = 600
+
+    /// Every couple of minutes: browsers off screen that their agent can't be using (asleep,
+    /// exited) or that went unused past the limit close their page; Chromium pages no browser
+    /// owns are closed.
+    func tidyBrowsers(now: Date = Date()) {
+        guard AgentBrowser.shared.isRunning else { return }
+        var live: Set<String> = []
+        var addresses: Set<String> = []
+        for session in sessions where session.kind == .browser {
+            guard let surface = session.surface as? BrowserSurfaceView, surface.isLive else { continue }
+            let owner = session.spec.owner.flatMap { id in sessions.first { $0.id == id } }
+            let ownerIdle: Bool
+            if let owner, case .exited = owner.state { ownerIdle = true } else { ownerIdle = owner?.isAsleep ?? false }
+            if surface.isOffScreen, ownerIdle || now.timeIntervalSince(surface.lastUsedAt) > Self.browserIdleLimit {
+                surface.goDormant()
+                session.record(.note, "Page closed to save memory; it reopens when shown or used")
+            } else {
+                live.insert(session.label)
+                if let url = surface.model.url?.absoluteString { addresses.insert(url) }
+            }
+        }
+        BrowserJanitor.shared.sweep(keeping: live, addresses: addresses)
+    }
+
     func isBrowserReady(_ session: TerminalSession) -> Bool {
         (session.surface as? BrowserSurfaceView)?.model.browser != nil
     }

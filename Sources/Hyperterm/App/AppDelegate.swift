@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let gitInspector = GitInspector()
     private var statusBar: StatusBarController?
     private var pollCount = 0
+    private var lastBrowserTidy = Date()
     /// When the steward last measured; it runs on the poll, but at most once a minute.
     private var lastStewardUpdate: Date?
     private var lastRegistryStatus: [UUID: String] = [:]
@@ -200,6 +201,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Working agents and the one on screen every ~10s; everything else once a minute (idle
         // agents also refresh on their Stop hook).
         if pollCount % 4 == 0 { refreshDiffStats(all: pollCount % 24 == 0) }
+        if Date().timeIntervalSince(lastBrowserTidy) > 120 {
+            lastBrowserTidy = Date()
+            store.tidyBrowsers()
+        }
         for session in store.sessions {
             correctStaleWorking(session)
             // Before the queue, so a message is never typed into the trust prompt.
@@ -316,7 +321,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if case .exited = session.state { session.apply(.processStarted, source: "process", force: .idle) }
             // Codex reports nothing until its first turn ends: once it's running, it's at rest,
             // or already at work on the task it was started with.
-            if !adapter.reportsStart, session.state == .starting {
+            // Its app-server runs before the TUI draws, so a live process alone isn't ready: wait
+            // for the prompt, with no menu (trust, update, sign-in) over it.
+            if !adapter.reportsStart, session.state == .starting, session.showsAgentPrompt {
                 let hasTask = session.timeline.contains { $0.kind == .prompt }
                 session.apply(.processStarted, source: "process", force: hasTask ? .working : .idle)
             }
