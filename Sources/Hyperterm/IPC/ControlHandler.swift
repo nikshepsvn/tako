@@ -14,6 +14,9 @@ import AppKit
 /// for sessions the user handed it, never "always", and never past the risky-request guard.
 @MainActor
 struct ControlHandler {
+    /// Most browsers one agent keeps open, its main one included.
+    static let agentTabCap = 4
+
     let store: SessionStore
     let caller: CallerIdentity
 
@@ -74,11 +77,24 @@ struct ControlHandler {
             AgentBrowser.shared.noteActivity(agent: agent.label, browser: target.label, tool: tool)
         }
         store.wakeBrowser(target)
+        // The tab the agent's tools act on counts as in use too, so it isn't put to sleep under it.
+        if let agent = callerAgent, let tab = request.target?.trimmingCharacters(in: CharacterSet(charactersIn: "@")),
+           let owned = store.browsers(ownedBy: agent).first(where: { $0.label == tab }) {
+            store.wakeBrowser(owned)
+        }
         let store = self.store
+        // Already up, with nothing to load: each page re-tags itself on every load, so there is
+        // nothing to wait for. This is most calls.
+        if page == nil, request.text != "mark", store.isBrowserReady(target) {
+            var response = ControlResponse.success(text: target.label)
+            response.endpoint = AgentBrowser.endpoint
+            reply(response)
+            return
+        }
         AgentBrowser.waitUntilReady({ store.isBrowserReady(target) }) { ready in
             guard ready else { reply(.failure("browser unavailable: Chromium didn't come up")); return }
             if let page, let surface = target.surface as? BrowserSurfaceView { surface.model.load(page) }
-            store.markBrowsers()
+            if request.text == "mark" { store.markBrowsers() } else { (target.surface as? BrowserSurfaceView)?.mark() }
             // Tags land asynchronously in each page's renderer.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 var response = ControlResponse.success(text: target.label)
@@ -118,13 +134,19 @@ struct ControlHandler {
             }
             spec.url = url.absoluteString
         }
+        // Each tab is a Chromium renderer: past the cap, the oldest extra tab the agent opened goes.
+        let extras = store.browsers(ownedBy: agent).filter { $0.id != primary.id }
+        if extras.count >= Self.agentTabCap - 1, let oldest = extras.min(by: { $0.createdAt < $1.createdAt }) {
+            store.close(oldest)
+            agent.record(.note, "Closed browser @\(oldest.label) (tab limit \(Self.agentTabCap))")
+        }
         let tab = store.create(spec, select: false)
         agent.record(.note, "Opened browser @\(tab.label)")
         store.wakeBrowser(tab)
         let store = self.store
         AgentBrowser.waitUntilReady({ store.isBrowserReady(tab) }) { ready in
             guard ready else { reply(.failure("browser unavailable: Chromium didn't come up")); return }
-            store.markBrowsers()
+            (tab.surface as? BrowserSurfaceView)?.mark()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 var response = ControlResponse.success(text: tab.label)
                 response.endpoint = AgentBrowser.endpoint
@@ -589,6 +611,9 @@ struct ControlHandler {
             if let warning = session.escalation { line += " · warning: " + warning.message }
             lines.append(line)
         }
+        if status.browserProcesses > 0 {
+            lines.append("Browsers (Tako's Chromium, all tiles) · \(gb(status.browserBytes)) in \(status.browserProcesses) processes; hidden idle pages close on their own")
+        }
         return lines.joined(separator: "\n")
     }
 
@@ -685,8 +710,8 @@ struct ControlHandler {
     /// answer_prompt: approve or deny a permission request of a session handed to Sumi.
     private func answerForSumi(_ request: ControlRequest) -> ControlResponse {
         guard let target = resolve(request.target) else { return notFound(request.target) }
-        guard let answer = PromptAnswer(rawValue: request.text ?? ""), answer != .always else {
-            return .failure("answer must be approve or deny; never \"always\"")
+        guard let answer = PromptAnswer(rawValue: request.text ?? "") else {
+            return .failure("answer must be approve, always, or deny")
         }
         let reason = request.label.map(sanitizeMessage).flatMap { $0.isEmpty ? nil : $0 }
         switch store.answerForSumi(target, answer, reason: reason, userApproved: request.userApproved == true) {
@@ -706,18 +731,31 @@ struct ControlHandler {
             case .failure(let error): reply(.failure(error.description))
             }
         }
+        let userApproved = request.userApproved == true
         switch request.text {
         case "choose":
-            guard let option = request.count else { reply(.failure("option is required")); return }
-            store.chooseForSumi(target, option: option, completion: send)
+            let options = request.options ?? request.count.map { [$0] } ?? []
+            store.chooseForSumi(target, options: options, userApproved: userApproved, completion: send)
         case "trust":
-            send(store.trustForSumi(target, userApproved: request.userApproved == true))
+            send(store.trustForSumi(target, userApproved: userApproved))
         case "signin":
             store.signInForSumi(target, completion: send)
         case "interrupt":
-            send(store.interruptForSumi(target))
+            store.interruptForSumi(target, hard: request.hard == true, completion: send)
+        case "keys":
+            store.pressKeysForSumi(target, keys: request.keys ?? [], userApproved: userApproved, completion: send)
+        case "type":
+            store.typeForSumi(target, text: request.label ?? "", submit: request.submit ?? true, userApproved: userApproved, completion: send)
+        case "restart":
+            send(store.restartForSumi(target))
+        case "mode":
+            guard let mode = request.mode.flatMap(PermissionMode.init(rawValue:)) else {
+                reply(.failure("mode must be one of: " + PermissionMode.allCases.map(\.rawValue).joined(separator: ", ")))
+                return
+            }
+            store.setModeForSumi(target, mode: mode, userApproved: userApproved, completion: send)
         default:
-            reply(.failure("act must be choose, trust, signin or interrupt"))
+            reply(.failure("act must be choose, trust, signin, interrupt, keys, type, restart or mode"))
         }
     }
 
@@ -835,6 +873,14 @@ struct ControlHandler {
             // Sumi hears the reply to what it sent, without having to ask for a watch.
             if sender.isSumi, !target.isSumi, store.sumiWatches[target.id] == nil {
                 store.sumiWatches[target.id] = ""
+            }
+            // Queued behind a dialog, the message waits on whoever answers it: say so, with the
+            // choices, so Sumi answers the dialog instead of assuming the message went through.
+            if sender.isSumi, result.hasPrefix("queued"), target.dialogOnScreen {
+                let menu = PromptScreen.menu(target.surface.readViewport())
+                let choices = menu.isEmpty ? "" : " Its choices: " + menu.map { "\($0.number). \($0.text)" }.joined(separator: "; ") + "."
+                return .success(text: result + ". @\(target.label) is showing a dialog, so the message waits until it's answered."
+                    + choices + " Answer it with choose_option or press_keys, or read_terminal to see it.")
             }
             return .success(text: result)
         }

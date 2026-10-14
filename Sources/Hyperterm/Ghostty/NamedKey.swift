@@ -5,6 +5,8 @@ struct NamedKey {
     let keyCode: Int
     let text: String
     let control: Bool
+    var shift = false
+    var alt = false
 
     private static let special: [String: (Int, String)] = [
         "enter": (kVK_Return, "\r"), "return": (kVK_Return, "\r"),
@@ -28,22 +30,33 @@ struct NamedKey {
         "9": kVK_ANSI_9,
     ]
 
+    /// "enter", "y", or any of those behind modifiers: "ctrl-c", "shift-tab", "alt-enter", "ctrl-shift-z".
     init?(_ raw: String) {
-        let name = raw.lowercased()
+        var name = raw.lowercased().replacingOccurrences(of: "+", with: "-")
+        var control = false, shift = false, alt = false
+        while let prefix = ["ctrl-", "control-", "shift-", "alt-", "option-", "opt-"].first(where: name.hasPrefix), name.count > prefix.count {
+            name.removeFirst(prefix.count)
+            switch prefix {
+            case "ctrl-", "control-": control = true
+            case "shift-": shift = true
+            default: alt = true
+            }
+        }
+        if name == "backtab" { name = "tab"; shift = true }
         if let (code, text) = Self.special[name] {
-            self.init(keyCode: code, text: text, control: false)
-        } else if name.hasPrefix("ctrl-"), name.count == 6, let char = name.last, let code = Self.letters[char] {
-            self.init(keyCode: code, text: String(char), control: true)
+            self.init(keyCode: code, text: text, control: control, shift: shift, alt: alt)
         } else if name.count == 1, let char = name.first, let code = Self.letters[char] {
-            self.init(keyCode: code, text: String(char), control: false)
+            self.init(keyCode: code, text: shift && !control ? String(char).uppercased() : String(char), control: control, shift: shift, alt: alt)
         } else {
             return nil
         }
     }
 
-    private init(keyCode: Int, text: String, control: Bool) {
+    private init(keyCode: Int, text: String, control: Bool, shift: Bool, alt: Bool) {
         self.keyCode = keyCode
         self.text = text
         self.control = control
+        self.shift = shift
+        self.alt = alt
     }
 }

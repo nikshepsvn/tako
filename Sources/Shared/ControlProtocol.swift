@@ -30,7 +30,8 @@ enum ControlCommand: String, Codable {
     case machine       // Sumi and the steward: text = status | policy (count = agent cap, targets = pinned)
     case delegate      // Sumi handles target's waits: text = handle | stop | list (label = scope, count, note)
     case phoneMode     // Phone Mode, from the user or Sumi: text = on | off | status
-    case act           // Sumi acts on an agent: text = choose (count = option) | trust | signin | interrupt
+    case act           // Sumi acts on an agent: text = choose (options) | trust | signin | interrupt (hard)
+                       // | keys (keys) | type (text in label, submit) | restart | mode (mode)
 }
 
 struct ControlRequest: Codable {
@@ -73,6 +74,12 @@ struct ControlRequest: Codable {
     var userApproved: Bool?
     /// For `browser`: a page to open in the caller's browser (a URL, an address, or a file URL).
     var url: String?
+    /// For `act` choose: option numbers, one per question of a form (the first alone for a menu).
+    var options: [Int]?
+    /// For `act` mode: a PermissionMode raw value.
+    var mode: String?
+    /// For `act` interrupt: Ctrl-C instead of Esc.
+    var hard: Bool?
 }
 
 /// The most agents one start_agent call may start on the same task.

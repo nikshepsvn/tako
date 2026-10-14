@@ -115,7 +115,8 @@ extension SessionStore {
         let parallelTool = held.map { $0.matches(json) ? event == "PreToolUse" : $0.runsAlongside(json) } ?? false
         // A tool call moving on means a prompt held open was answered in the terminal itself.
         if !parallelTool, held != nil || ["PostToolUse", "PostToolUseFailure", "Stop", "StopFailure", "UserPromptSubmit"].contains(event) {
-            dropApproval(for: session)
+            // A turn ending or a new prompt means nothing in line is still waiting either.
+            if ["Stop", "StopFailure", "UserPromptSubmit"].contains(event) { dropAllApprovals(for: session) } else { dropApproval(for: session) }
             session.pendingQuestion = nil
         }
 

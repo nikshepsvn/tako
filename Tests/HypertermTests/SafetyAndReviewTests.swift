@@ -68,6 +68,83 @@ final class SafetyAndReviewTests: XCTestCase {
         XCTAssertFalse(PromptScreen.hasTrustDialog("Claude Code v2.1\n⏺ Done.\n───────\n❯ \n───────\n? for shortcuts"))
     }
 
+    func testDevChannelWarningDetection() {
+        let warning = """
+         WARNING: Loading development channels
+
+          --dangerously-load-development-channels is for local channel development only. Do not use this option to run channels you have downloaded off the internet.
+
+          Please use --channels to run a list of approved channels.
+
+          Channels: server:hyperterm
+
+          ❯ 1. I am using this for local development
+            2. Exit
+
+          Enter to confirm · Esc to cancel
+        """
+        XCTAssertTrue(PromptScreen.hasDevChannelWarning(warning))
+        // Cursor moved to Exit: Return would quit, so leave it alone.
+        XCTAssertFalse(PromptScreen.hasDevChannelWarning(warning
+            .replacingOccurrences(of: "❯ 1.", with: "  1.").replacingOccurrences(of: "  2. Exit", with: "❯ 2. Exit")))
+        // Someone else's channel isn't Tako's to accept.
+        XCTAssertFalse(PromptScreen.hasDevChannelWarning(warning.replacingOccurrences(of: "server:hyperterm", with: "server:other")))
+        XCTAssertFalse(PromptScreen.hasDevChannelWarning(claudeTrust))
+    }
+
+    func testMenuIsOnlyTheBlockUnderTheCursor() {
+        let screen = """
+        ⏺ Plan:
+          1. Normalize config
+          2. Delete the cache
+
+         Bash command
+           rm -rf build
+         Do you want to proceed?
+           1. Yes
+           2. Yes, and don't ask again for rm commands
+         ❯ 3. No, and tell Claude what to do differently (esc)
+        """
+        XCTAssertEqual(PromptScreen.menu(screen).map(\.number), [1, 2, 3])
+        XCTAssertEqual(PromptScreen.menu(screen).first?.text, "Yes")
+        // Deny lands on the dialog's own "No", never the reply's "1." line.
+        XCTAssertEqual(PromptScreen.keys(for: .deny, screen: screen, kind: .claude), ["3"])
+        XCTAssertEqual(PromptScreen.keys(for: .approve, screen: screen, kind: .claude), ["1"])
+        XCTAssertTrue(PromptScreen.menu("  1. one\n  2. two\n❯ ").isEmpty)
+    }
+
+    func testAutoModeOfferIsDeclined() {
+        let offered = """
+         Make auto mode your default permission mode?
+         Auto mode lets Claude handle permission prompts automatically.
+        ❯ Yes, set auto mode as my default permission mode
+          No, keep bypass permissions
+        """
+        XCTAssertEqual(PromptScreen.autoModeOfferKeys(offered), ["down"])
+        let onNo = offered.replacingOccurrences(of: "❯ Yes", with: "  Yes").replacingOccurrences(of: "  No, keep", with: "❯ No, keep")
+        XCTAssertEqual(PromptScreen.autoModeOfferKeys(onNo), ["enter"])
+        XCTAssertNil(PromptScreen.autoModeOfferKeys(claudeTrust))
+    }
+
+    func testClaudeModeFromFooter() {
+        XCTAssertEqual(PromptScreen.claudeMode("❯ \n⏵⏵ bypass permissions on (shift+tab to cycle)"), .fullAccess)
+        XCTAssertEqual(PromptScreen.claudeMode("❯ \n⏸ plan mode on (shift+tab to cycle)"), .plan)
+        XCTAssertEqual(PromptScreen.claudeMode("❯ \n⏵⏵ accept edits on (shift+tab to cycle)"), .acceptEdits)
+        XCTAssertEqual(PromptScreen.claudeMode("❯ \n? for shortcuts"), .supervised)
+        XCTAssertNil(PromptScreen.claudeMode("❯ \n⏵⏵ auto mode on (shift+tab to cycle)"))
+    }
+
+    func testNamedKeyModifiers() {
+        let backTab = NamedKey("shift-tab")
+        XCTAssertEqual(backTab?.shift, true)
+        XCTAssertEqual(backTab?.control, false)
+        XCTAssertEqual(NamedKey("ctrl-c")?.control, true)
+        XCTAssertEqual(NamedKey("ctrl-shift-z").map { [$0.control, $0.shift] }, [true, true])
+        XCTAssertEqual(NamedKey("alt-enter")?.alt, true)
+        XCTAssertNil(NamedKey("shift-"))
+        XCTAssertNil(NamedKey("hyper-x"))
+    }
+
     @MainActor
     func testTrustPromptNeedsYouAndClearsWhenAnswered() {
         let session = TerminalSession(spec: LaunchSpec(label: "api", kind: .claude, cwd: "/tmp"), resume: false)

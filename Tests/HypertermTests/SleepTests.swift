@@ -112,6 +112,16 @@ final class SleepTests: XCTestCase {
         let resumed = AgentIntegration.initialInput(for: spec, resume: true) ?? ""
         XCTAssertTrue(resumed.contains("--resume '0f8fad5b-d9cb-469f-a165-70867728950e'"))
         XCTAssertFalse(resumed.contains("--session-id"))
+        XCTAssertFalse(resumed.hasPrefix("cd "), "no worktree: stays where the shell is")
+        // A worktree agent resumes inside its worktree, not the repo root Claude would work in.
+        let repo = FileManager.default.temporaryDirectory.appendingPathComponent("resume-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: repo.appendingPathComponent(".claude/worktrees/wt"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: repo) }
+        var worktree = spec
+        worktree.cwd = repo.path
+        worktree.worktreeName = "wt"
+        let inWorktree = AgentIntegration.initialInput(for: worktree, resume: true) ?? ""
+        XCTAssertTrue(inWorktree.hasPrefix("cd \(shellQuote(worktree.workPath)) && "), inWorktree)
         // Quit before its first message (say at the folder-trust prompt): nothing to resume, so it
         // starts fresh under the same id rather than failing with "No conversation found".
         ClaudeAdapter.conversationExists = { _, _ in false }

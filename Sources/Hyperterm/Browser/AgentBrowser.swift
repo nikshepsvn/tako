@@ -58,6 +58,10 @@ final class AgentBrowser {
         configuration.rootCachePath = Self.profileDirectory
         configuration.remoteDebuggingPort = Self.port
         configuration.persistSessionCookies = true
+        // Past a handful of renderers, pages share processes instead of each starting one (every
+        // agent can have tabs open), and no idle spare renderer is kept warm.
+        configuration.extraCommandLineSwitches["renderer-process-limit"] = "6"
+        configuration.extraCommandLineSwitches["disable-features"] = "SpareRendererForSitePerProcess"
         do {
             try CefRuntime.shared.initialize(configuration: configuration)
             CEFApplication.setTerminateHandler {

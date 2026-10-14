@@ -44,9 +44,26 @@ final class BrowserSurfaceView: NSView, SessionSurface {
         BrowserPane(browser: AgentBrowser.shared, model: model, label: label, store: store, isLive: isLive)
     }
 
+    /// Last time the user looked at it or an agent used it; hidden browsers idle past a limit sleep.
+    private(set) var lastUsedAt = Date()
+
+    func noteUse() { lastUsedAt = Date() }
+
+    /// Hidden and nobody's: SwiftUI drops the Chromium view, which closes the page and its
+    /// renderer. The address stays on the model, so goLive reopens it where it was.
+    func goDormant() {
+        guard isLive, !destroyed else { return }
+        isLive = false
+        host?.rootView = pane()
+    }
+
+    /// Off screen: not in a window, or its tile is hidden.
+    var isOffScreen: Bool { window == nil || isHiddenOrHasHiddenAncestor }
+
     /// Starts Chromium if needed and creates the page, even while the tile is hidden (an agent
     /// can use a browser nobody is looking at).
     func goLive() {
+        noteUse()
         guard !isLive, !destroyed else { return }
         isLive = true
         AgentBrowser.shared.start()
@@ -101,6 +118,10 @@ final class BrowserSurfaceView: NSView, SessionSurface {
     func destroy() {
         destroyed = true
         model.browser?.close(force: true)
+        // Drop the Chromium view now rather than whenever SwiftUI gets to it, so its page closes
+        // with the tile (BrowserJanitor sweeps up any that linger anyway).
+        isLive = false
+        host?.rootView = pane()
     }
 
     /// Typing into a page goes through the agent's browser tools, not the terminal channel.

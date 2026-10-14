@@ -66,19 +66,66 @@ final class SumiControlCenterTests: XCTestCase {
         let (store, api, _) = fixture()
         store.setPhoneMode(true)
         var refused: String?
-        store.chooseForSumi(api, option: 1) { if case .failure(let error) = $0 { refused = error.description } }
-        XCTAssertTrue(refused?.contains("isn't asking a question") == true)
+        store.chooseForSumi(api, options: [1]) { if case .failure(let error) = $0 { refused = error.description } }
+        XCTAssertTrue(refused?.contains("no numbered menu on screen") == true)
 
         api.pendingQuestion = PendingQuestion.parse(toolInput: ["questions": [["question": "Q", "options": [["label": "A"], ["label": "B"]]]]])
         api.apply(.processStarted, source: "test", force: .needsInput("Q"))
-        store.chooseForSumi(api, option: 3) { if case .failure(let error) = $0 { refused = error.description } }
+        store.chooseForSumi(api, options: [3]) { if case .failure(let error) = $0 { refused = error.description } }
         XCTAssertEqual(refused, "option must be 1–2")
     }
 
-    func testInterruptOnlyStopsAWorkingAgent() {
+    func testSumisHandsNeedPhoneModeOrAHandoff() {
         let (store, api, sumi) = fixture()
-        guard case .failure = store.interruptForSumi(api) else { return XCTFail("idle agents have nothing to stop") }
-        guard case .failure = store.interruptForSumi(sumi) else { return XCTFail("Sumi doesn't interrupt itself") }
+        var refused: [String] = []
+        let collect: (Result<String, DelegationError>) -> Void = { if case .failure(let error) = $0 { refused.append(error.description) } }
+        store.interruptForSumi(api, hard: false, completion: collect)
+        store.pressKeysForSumi(api, keys: ["enter"], userApproved: false, completion: collect)
+        store.typeForSumi(api, text: "hi", submit: true, completion: collect)
+        store.setModeForSumi(api, mode: .plan, completion: collect)
+        XCTAssertEqual(refused.count, 4)
+        XCTAssertTrue(refused.allSatisfy { $0.contains("isn't handed to you") })
+        guard case .failure = store.restartForSumi(api) else { return XCTFail("not handed over") }
+        store.interruptForSumi(sumi, hard: false, completion: collect)
+        XCTAssertTrue(refused.last?.contains("isn't an agent") == true, "Sumi doesn't interrupt itself")
+
+        store.setPhoneMode(true)
+        refused = []
+        store.pressKeysForSumi(api, keys: ["enter", "hyper-x"], userApproved: false, completion: collect)
+        XCTAssertTrue(refused.first?.contains("unknown key names: hyper-x") == true)
+        store.typeForSumi(api, text: "!rm -rf ~", submit: true, completion: collect)
+        XCTAssertTrue(refused.last?.contains("shell command") == true)
+        store.setModeForSumi(api, mode: .fullAccess, completion: collect)
+        XCTAssertTrue(refused.last?.contains("never asks again") == true)
+    }
+
+    func testDigestDropsRepeatsAndCaps() {
+        var digest = SumiDigest()
+        digest.add(SumiEvent(label: "api", kind: .stoppedHandling("x")))
+        digest.add(SumiEvent(label: "api", kind: .stoppedHandling("x")))
+        XCTAssertEqual(digest.events.count, 1)
+        for index in 0..<(SumiDigest.cap + 5) { digest.add(SumiEvent(label: "a\(index)", kind: .stoppedHandling("x"))) }
+        XCTAssertEqual(digest.events.count, SumiDigest.cap)
+        XCTAssertTrue(digest.take()?.contains("6 older updates left out") == true)
+    }
+
+    func testTakoAgentsDropDuplicateBrowserPlugins() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("plugins-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home.appendingPathComponent(".claude"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let settings = #"{"enabledPlugins": {"chrome-devtools-mcp@claude-plugins-official": true, "playwright@x": false, "stripe@claude-plugins-official": true}}"#
+        try Data(settings.utf8).write(to: home.appendingPathComponent(".claude/settings.json"))
+        XCTAssertEqual(ClaudeAdapter.duplicateBrowserPlugins(home: home), ["chrome-devtools-mcp@claude-plugins-official"])
+    }
+
+    func testAlwaysNeedsPhoneModeAndTheUsersYes() {
+        let (store, api, _) = fixture()
+        _ = store.delegate(api, scope: .turn, note: nil)
+        guard case .failure(let atMac) = store.answerForSumi(api, .always, reason: nil, userApproved: true) else { return XCTFail() }
+        XCTAssertTrue(atMac.description.contains("needs the user's yes"))
+        store.setPhoneMode(true)
+        guard case .failure(let unasked) = store.answerForSumi(api, .always, reason: nil) else { return XCTFail() }
+        XCTAssertTrue(unasked.description.contains("needs the user's yes"))
     }
 
     func testInPhoneModeSumiHearsEveryAgentFinishWithoutAWatch() {

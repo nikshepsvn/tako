@@ -85,6 +85,22 @@ struct ProcessUsage {
         return ProcessUsage(footprint: info.ri_phys_footprint, cpuNanoseconds: ticks * timebase.numer / timebase.denom)
     }
 
+    /// Tako's own Chromium: its helpers (renderers, GPU, network) run as Tako's children from the
+    /// app bundle's Frameworks, outside every session's process tree.
+    static func browserProcesses() -> (count: Int, footprint: UInt64) {
+        var pids = [pid_t](repeating: 0, count: 1024)
+        let returned = Int(proc_listchildpids(getpid(), &pids, Int32(pids.count * MemoryLayout<pid_t>.size)))
+        // libproc answers in pids on some releases and bytes on others.
+        let count = min(returned > pids.count ? returned / MemoryLayout<pid_t>.size : returned, pids.count)
+        var total: (count: Int, footprint: UInt64) = (0, 0)
+        for pid in pids.prefix(max(count, 0)) where pid > 0 {
+            guard path(pid)?.contains(".app/Contents/Frameworks/") == true, let usage = read(pid) else { continue }
+            total.count += 1
+            total.footprint += usage.footprint
+        }
+        return total
+    }
+
     /// The process's executable path.
     static func path(_ pid: pid_t) -> String? {
         var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))

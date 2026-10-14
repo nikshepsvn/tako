@@ -175,10 +175,17 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
         guard let contents = layers.lazy.compactMap({ $0.contents as CFTypeRef? }).first(where: {
             CFGetTypeID($0) == IOSurfaceGetTypeID()
         }) else { return nil }
-        let image = CIImage(ioSurface: unsafeBitCast(contents, to: IOSurfaceRef.self))
-        guard let cgImage = CIContext().createCGImage(image, from: image.extent) else { return nil }
+        var image = CIImage(ioSurface: unsafeBitCast(contents, to: IOSurfaceRef.self))
+        // A sleeping agent's stand-in, kept for as long as it sleeps: stored at 1x (a quarter of a
+        // Retina frame's memory), drawn at the tile's size.
+        let scale = image.extent.width > 0 ? min(1, bounds.width / image.extent.width) : 1
+        if scale < 1 { image = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale)) }
+        guard let cgImage = Self.frameContext.createCGImage(image, from: image.extent.integral) else { return nil }
         return NSImage(cgImage: cgImage, size: bounds.size)
     }
+
+    /// One for every freeze: a CIContext is expensive to create.
+    private static let frameContext = CIContext(options: [.cacheIntermediates: false])
 
     // MARK: - Host-driven input
 
@@ -213,12 +220,16 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
         guard let surface, let key = NamedKey(raw) else { return false }
         var event = ghostty_input_key_s()
         event.keycode = UInt32(key.keyCode)
-        event.mods = key.control ? GHOSTTY_MODS_CTRL : GHOSTTY_MODS_NONE
+        var mods = GHOSTTY_MODS_NONE.rawValue
+        if key.control { mods |= GHOSTTY_MODS_CTRL.rawValue }
+        if key.shift { mods |= GHOSTTY_MODS_SHIFT.rawValue }
+        if key.alt { mods |= GHOSTTY_MODS_ALT.rawValue }
+        event.mods = ghostty_input_mods_e(mods)
         event.consumed_mods = GHOSTTY_MODS_NONE
         event.unshifted_codepoint = key.text.unicodeScalars.first?.value ?? 0
         event.composing = false
         event.action = GHOSTTY_ACTION_PRESS
-        let printable = !key.control && (key.text.unicodeScalars.first?.value ?? 0) >= 0x20
+        let printable = !key.control && !key.alt && (key.text.unicodeScalars.first?.value ?? 0) >= 0x20
         if printable {
             key.text.withCString { ptr in
                 event.text = ptr

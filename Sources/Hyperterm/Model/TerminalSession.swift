@@ -193,7 +193,9 @@ final class TerminalSession: ObservableObject, Identifiable {
 
     /// Kills the current process and starts the same spec again. Queued messages survive.
     func restart() {
-        store?.dropApproval(for: self)
+        store?.dropAllApprovals(for: self)
+        // Typed once the relaunched agent is ready, instead of lost with the old channel.
+        pendingMessages += store?.dropChannel(for: self) ?? []
         endSleep()
         isWaking = false
         resumeAwaitsExit = false
@@ -410,10 +412,20 @@ final class TerminalSession: ObservableObject, Identifiable {
 
     // MARK: - Screen checks
 
+    /// The agent's input prompt is drawn and nothing is asked over it.
+    var showsAgentPrompt: Bool {
+        guard let marker = kind.adapter?.promptMarker else { return false }
+        let screen = surface.readViewport()
+        let prompt = screen.split(separator: "\n").contains { $0.trimmingCharacters(in: .whitespaces).hasPrefix(marker) }
+        return prompt && PromptScreen.menu(screen).isEmpty && !dialogOnScreen
+    }
+
     /// A selection dialog (permission prompt, question, menu) is on screen.
     var dialogOnScreen: Bool {
         let screen = surface.readViewport()
-        return PromptScreen.hasDialog(screen)
+        // Trust and sign-in screens too: a queued message's Return there would answer them.
+        return PromptScreen.hasDialog(screen) || PromptScreen.hasTrustDialog(screen) || PromptScreen.hasSignIn(screen, kind: kind)
+            || PromptScreen.autoModeOfferKeys(screen) != nil
     }
 
     /// Claude Code and Codex ask to trust a new folder, and Codex to sign in, before any hook
@@ -421,6 +433,7 @@ final class TerminalSession: ObservableObject, Identifiable {
     /// (while starting, or in the first two minutes) and while the prompt is up.
     func checkTrustPrompt() {
         guard kind.isAgent, !isAsleep else { return }
+        if kind == .claude, Date().timeIntervalSince(createdAt) < 120, answerStartupScreen() { return }
         let mayShow = lastHookAt == .distantPast && (state == .starting || Date().timeIntervalSince(createdAt) < 120)
         guard showingTrustPrompt || mayShow else { return }
         let screen = surface.readViewport()
@@ -431,17 +444,63 @@ final class TerminalSession: ObservableObject, Identifiable {
             if showingTrustPrompt, state == .needsInput(reason), pendingQuestion == nil {
                 pendingQuestion = PendingQuestion.fromScreen(screen, question: reason)
             }
+        } else if kind == .claude, !PromptScreen.hasTrustDialog(screen) {
+            let stuck = isStuckOnStartupScreen(screen)
+            if !stuck, pendingQuestion?.selectsByNumber == true { pendingQuestion = nil }
+            trustPromptSeen(stuck, reason: Self.startupScreenReason)
+            if stuck, pendingQuestion == nil, !PromptScreen.menu(screen).isEmpty {
+                pendingQuestion = PendingQuestion.fromScreen(screen, question: Self.startupScreenReason)
+            }
         } else {
             if pendingQuestion?.selectsByNumber == true { pendingQuestion = nil }
             trustPromptSeen(PromptScreen.hasTrustDialog(screen))
         }
     }
 
-    nonisolated static let trustReason = "Trust this folder?"
+    /// Claude reports SessionStart as soon as it's up. Running for a while without it, and not
+    /// showing its prompt, it is on a screen Tako doesn't know (first-run theme or login picker,
+    /// a new notice): someone has to answer it, and nothing typed may land there meanwhile.
+    private func isStuckOnStartupScreen(_ screen: String) -> Bool {
+        guard agentProcessSeen, lastHookAt == .distantPast, Date().timeIntervalSince(createdAt) > 20,
+              state == .starting || showingTrustPrompt else { return false }
+        return !screen.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !PromptScreen.showsClaudePrompt(screen)
+    }
 
-    /// Waits only the user can answer: trusting a folder, signing in.
+    private var startupScreenAnsweredAt = Date.distantPast
+
+    /// Screens Claude shows at startup because of how Tako launched it, answered the way the
+    /// launch already decided; left up, they block sessions started from the phone. They can come
+    /// after SessionStart, so this runs for the first two minutes whatever the hooks said. True
+    /// while one is on screen.
+    private func answerStartupScreen() -> Bool {
+        let screen = surface.readViewport()
+        let keys: [String]
+        let note: String
+        if PromptScreen.hasDevChannelWarning(screen) {
+            // Tako passed --dangerously-load-development-channels itself (channels on).
+            keys = ["enter"]
+            note = "Accepted Claude's development channel warning"
+        } else if let decline = PromptScreen.autoModeOfferKeys(screen) {
+            // Launched skipping permissions, Claude offers to make auto mode the default with
+            // "Yes" preselected: a stray Return would change the user's settings. Keep what they chose.
+            keys = decline
+            note = "Kept bypass permissions (declined Claude's auto mode offer)"
+        } else {
+            return false
+        }
+        guard Date().timeIntervalSince(startupScreenAnsweredAt) > 2 else { return true }
+        startupScreenAnsweredAt = Date()
+        keys.forEach { _ = surface.pressKey(named: $0) }
+        record(.note, note)
+        return true
+    }
+
+    nonisolated static let trustReason = "Trust this folder?"
+    nonisolated static let startupScreenReason = "Claude is showing a startup screen"
+
+    /// Waits only the user can answer: trusting a folder, signing in, a screen Tako doesn't know.
     static func isUsersOwn(_ reason: String) -> Bool {
-        reason == trustReason || reason.hasPrefix("Sign in to ")
+        reason == trustReason || reason.hasPrefix("Sign in to ") || reason == startupScreenReason
     }
 
     func trustPromptSeen(_ onScreen: Bool, reason: String = TerminalSession.trustReason) {
@@ -485,7 +544,11 @@ final class TerminalSession: ObservableObject, Identifiable {
         if isAsleep { return false }
         switch state {
         case .idle, .failed: return true
-        case .starting: return agentProcessSeen
+        // Claude reports SessionStart once up; before that, a running CLI may still be on a
+        // startup screen a typed Return would answer, unless its prompt is what's drawn.
+        case .starting:
+            return agentProcessSeen && (kind != .claude || lastHookAt != .distantPast
+                || PromptScreen.showsClaudePrompt(surface.readViewport()))
         default: return false
         }
     }
@@ -622,6 +685,10 @@ final class TerminalSession: ObservableObject, Identifiable {
         if kind == .browser {
             return "@\(label) is a browser; use the browser tools (pageId for @\(label)) to act on it"
         }
+        // The CLI is gone and a shell holds the terminal: typed text would run as a command there.
+        if kind.isAgent, case .exited = state {
+            return "not delivered: @\(label) has exited; restart it first"
+        }
         if kind.isAgent, isAsleep || isWaking {
             pendingMessages.append(text)
             if let sender { record(.message, "Message from @\(sender)") }
@@ -643,6 +710,12 @@ final class TerminalSession: ObservableObject, Identifiable {
             return state == .starting ? "queued: @\(label) is starting; it gets the message once it's ready"
                 : "queued: @\(label) just got another message; it gets this one after that turn"
         }
+        // At rest with messages still queued, this one goes after them, not ahead.
+        if kind.isAgent, submit, atRest, !pendingMessages.isEmpty {
+            pendingMessages.append(text)
+            flushPendingMessages()
+            return "queued: @\(label) gets it after the \(pendingMessages.count - 1) before it"
+        }
         type(text, submit: submit)
         if let sender { record(.message, "Message from @\(sender)") }
         return "delivered to @\(label)"
@@ -660,6 +733,12 @@ final class TerminalSession: ObservableObject, Identifiable {
         return deliver(text, from: nil)
     }
 
+    /// Types exactly what a person at the keyboard would, straight in: no queueing behind a dialog
+    /// or a draft, no "Message from" framing. For Sumi answering a free-text field or a menu.
+    func typeAsUser(_ text: String, submit: Bool) {
+        type(text, submit: submit, countsAsWork: submit && !dialogOnScreen)
+    }
+
     func removeQueued(at index: Int) {
         guard pendingMessages.indices.contains(index) else { return }
         pendingMessages.remove(at: index)
@@ -667,7 +746,7 @@ final class TerminalSession: ObservableObject, Identifiable {
 
     /// Sends a queued message right away instead of waiting for the turn to end.
     func sendQueuedNow(at index: Int) {
-        guard pendingMessages.indices.contains(index), atRest || state == .working, !dialogOnScreen, inputIsEmpty else { return }
+        guard pendingMessages.indices.contains(index), atRest || state == .working, !submitInFlight, !dialogOnScreen, inputIsEmpty else { return }
         type(pendingMessages.remove(at: index), submit: true)
     }
 
@@ -681,7 +760,8 @@ final class TerminalSession: ObservableObject, Identifiable {
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(400)) { [weak self] in
             self?.flushScheduled = false
             // One message per turn: the rest wait for the agent to finish the one just sent.
-            guard let self, self.atRest, !self.dialogOnScreen,
+            // Not inside another message's paste-to-Return window: the two would merge.
+            guard let self, self.atRest, !self.submitInFlight, !self.dialogOnScreen,
                   self.inputIsEmpty, !self.pendingMessages.isEmpty else { return }
             let message = self.pendingMessages.removeFirst()
             // Tako's own slash commands start no turn, so they mustn't hold the queue.
@@ -896,12 +976,87 @@ enum PromptScreen {
         }
     }
 
+    /// The numbered menu under the selection cursor: the options counting down to 1 above it and up
+    /// from it below, so a numbered list in the agent's own reply above the dialog is never mistaken
+    /// for one of its choices.
+    static func menu(_ screen: String) -> [(number: Int, text: String)] {
+        let parsed = screen.split(separator: "\n", omittingEmptySubsequences: false).map { menuLine(String($0)) }
+        guard let cursor = parsed.lastIndex(where: { $0?.selected == true }), let current = parsed[cursor] else { return [] }
+        var items = [(number: current.number, text: current.text)]
+        var expect = current.number - 1
+        var index = cursor - 1
+        while expect >= 1, index >= 0 {
+            if let line = parsed[index] {
+                guard line.number == expect else { break }
+                items.insert((line.number, line.text), at: 0)
+                expect -= 1
+            }
+            index -= 1
+        }
+        guard expect == 0 else { return [] }
+        expect = current.number + 1
+        index = cursor + 1
+        while index < parsed.count {
+            if let line = parsed[index] {
+                guard line.number == expect else { break }
+                items.append((line.number, line.text))
+                expect += 1
+            }
+            index += 1
+        }
+        return items
+    }
+
+    private static func menuLine(_ raw: String) -> (number: Int, text: String, selected: Bool)? {
+        var line = raw.trimmingCharacters(in: .whitespaces)
+        var selected = false
+        if let marker = ["❯", "›"].first(where: line.hasPrefix) {
+            line = String(line.dropFirst(marker.count)).trimmingCharacters(in: .whitespaces)
+            selected = true
+        }
+        guard let dot = line.firstIndex(of: "."), let number = Int(line[..<dot]), (1...99).contains(number) else { return nil }
+        return (number, String(line[line.index(after: dot)...]).trimmingCharacters(in: .whitespaces), selected)
+    }
+
+    /// Claude's "Make auto mode your default permission mode?" offer: the next key toward "No, keep
+    /// …", one per call so each lands before the next, then Enter once the cursor is on it.
+    static func autoModeOfferKeys(_ screen: String) -> [String]? {
+        guard screen.lowercased().contains("make auto mode your default permission mode") else { return nil }
+        let lines = screen.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        func plain(_ line: String) -> String {
+            line.trimmingCharacters(in: CharacterSet(charactersIn: "❯› ")).lowercased().replacingOccurrences(of: " ", with: "")
+        }
+        // The last copy on screen is the live one; Claude may leave an earlier frame above it.
+        guard let no = lines.lastIndex(where: { plain($0).hasPrefix("no,keep") }),
+              let yes = lines[..<no].lastIndex(where: { plain($0).hasPrefix("yes,setautomode") }) else { return nil }
+        if lines[no].hasPrefix("❯") || lines[no].hasPrefix("›") { return ["enter"] }
+        return lines[yes].hasPrefix("❯") || lines[yes].hasPrefix("›") ? ["down"] : nil
+    }
+
+    /// Claude's permission mode, from the footer under its prompt; nil for a mode Tako has no name
+    /// for (auto).
+    static func claudeMode(_ screen: String) -> PermissionMode? {
+        let lower = screen.lowercased()
+        if lower.contains("bypass permissions on") { return .fullAccess }
+        if lower.contains("accept edits on") { return .acceptEdits }
+        if lower.contains("plan mode on") { return .plan }
+        if lower.contains("auto mode on") { return nil }
+        return .supervised
+    }
+
+    /// Claude's prompt box is drawn (not a dialog, not a startup screen), so Shift-Tab reaches it.
+    static func showsClaudePrompt(_ screen: String) -> Bool {
+        screen.split(separator: "\n").contains { $0.trimmingCharacters(in: .whitespaces).hasPrefix("❯") }
+            && menu(screen).isEmpty && !hasTrustDialog(screen)
+    }
+
     /// A live dialog draws its selection cursor on one option; an agent's reply that asks "Would you
     /// like me to…" over a numbered list has none, and must not hold messages back while it's on screen.
     static func hasDialog(_ screen: String) -> Bool {
         let lower = screen.lowercased()
         let asks = lower.contains("do you want") || lower.contains("would you like") || lower.contains("allow command")
             || lower.contains("proceed?") || lower.contains("trust this folder") || lower.contains("enter to confirm")
+            || lower.contains("press enter to continue") || lower.contains("update available")
         return asks && options(screen).count >= 2 && hasSelectedOption(screen)
     }
 
@@ -911,6 +1066,20 @@ enum PromptScreen {
             guard let marker = ["❯", "›"].first(where: line.hasPrefix) else { return false }
             let rest = line.dropFirst(marker.count).trimmingCharacters(in: .whitespaces)
             return rest.first.map { ("1"..."9").contains($0) } == true && rest.dropFirst().hasPrefix(".")
+        }
+    }
+
+    /// Claude's warning for Tako's own --dangerously-load-development-channels, with its default
+    /// option ("I am using this for local development") selected.
+    static func hasDevChannelWarning(_ screen: String) -> Bool {
+        let lower = screen.lowercased()
+        guard lower.contains("loading development channels"), lower.contains("server:hyperterm"),
+              let first = options(screen).first,
+              first.number == 1, first.text.lowercased().hasPrefix("i am using this for local development") else { return false }
+        // Return must land on option 1, never "Exit".
+        return screen.split(separator: "\n").contains { line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            return trimmed.hasPrefix("❯") && trimmed.dropFirst().trimmingCharacters(in: .whitespaces).hasPrefix("1.")
         }
     }
 
@@ -963,7 +1132,10 @@ enum PromptScreen {
 
     /// Keys that choose `answer` in the dialog on screen, or nil when there is no dialog.
     static func keys(for answer: PromptAnswer, screen: String, kind: SessionKind) -> [String]? {
-        let options = options(screen)
+        // Only the block under the cursor: a "1. …" line in the agent's reply above the dialog must
+        // never be what "deny" presses. Codex menus drawn without a cursor fall back to every line.
+        let underCursor = menu(screen)
+        let options = underCursor.isEmpty && kind.adapter?.optionsAloneMakeDialog == true ? options(screen) : underCursor
         if options.isEmpty, hasTrustDialog(screen) { return trustKeys(for: answer, screen: screen) }
         guard hasDialog(screen) || kind.adapter?.optionsAloneMakeDialog == true, !options.isEmpty else { return nil }
         func pick(_ predicate: (String) -> Bool) -> [String]? {

@@ -133,6 +133,11 @@ private final class LazyProxy: @unchecked Sendable {
     private var hiddenReplies: [String: [String: Any]] = [:]
     private var hiddenWaiters: [String: DispatchSemaphore] = [:]
     private var hiddenCounter = 0
+    /// Last request to or reply from the server: one idle past `idleLimit` is stopped and starts
+    /// again on the next request, so a tool used once doesn't hold its memory (a whole Chrome,
+    /// for some) until the agent exits.
+    private var lastActivity = Date()
+    private static let idleLimit: TimeInterval = 600
 
     init(name: String, command: [String], cacheURL: URL) {
         self.name = name
@@ -155,9 +160,14 @@ private final class LazyProxy: @unchecked Sendable {
             source.resume()
             sources.append(source)
         }
+        let idle = DispatchSource.makeTimerSource(queue: .global())
+        idle.schedule(deadline: .now() + 60, repeating: 60)
+        idle.setEventHandler { [self] in stopIfIdle() }
+        idle.resume()
         while let line = readLine(strippingNewline: false) {
             handleAgentLine(line)
         }
+        idle.cancel()
         let (process, input) = withState { (self.child, self.toChild) }
         try? input?.close()
         if let process {
@@ -258,6 +268,7 @@ private final class LazyProxy: @unchecked Sendable {
         let key = mcpRequestKey(id)
         let registered = withState { () -> Bool in
             guard self.child != nil else { return false }
+            self.lastActivity = Date()
             self.pending[key] = id
             return true
         }
@@ -269,6 +280,15 @@ private final class LazyProxy: @unchecked Sendable {
     }
 
     // MARK: - Server process
+
+    private func stopIfIdle() {
+        let process = withState { () -> Process? in
+            guard let child = self.child, self.pending.isEmpty, self.hiddenWaiters.isEmpty,
+                  Date().timeIntervalSince(self.lastActivity) > Self.idleLimit else { return nil }
+            return child
+        }
+        if let process { stopServer(process) }
+    }
 
     /// Starts the server; with `replay`, gives it the agent's handshake first.
     private func startServer(replay: Bool) -> Bool {
@@ -401,6 +421,7 @@ private final class LazyProxy: @unchecked Sendable {
         var capacity = 0
         defer { free(buffer); fclose(stream) }
         while getline(&buffer, &capacity, stream) > 0, let buffer {
+            withState { self.lastActivity = Date() }
             handleServerLine(String(cString: buffer))
         }
     }
