@@ -92,3 +92,23 @@ jobs:
           name: interface-captures-${{ matrix.os }}
           path: captures
           if-no-files-found: ignore
+
+      # A ready-to-run app, so Kuronami can be installed without Xcode (see README).
+      - name: Package app
+        if: matrix.os == 'macos-15'
+        run: |
+          set -o pipefail
+          xcodebuild -project Hyperterm.xcodeproj -scheme Hyperterm -configuration Release \
+            -derivedDataPath build/DerivedData build 2>&1 \
+            | tee release.log | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || true
+          grep -q "BUILD SUCCEEDED" release.log
+          # ditto keeps the Chromium framework's symlinks, which upload-artifact's zip would not.
+          ditto -c -k --keepParent build/DerivedData/Build/Products/Release/Kuronami.app Kuronami.zip
+
+      - name: Upload app
+        if: matrix.os == 'macos-15'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kuronami-app
+          path: Kuronami.zip
+          compression-level: 0

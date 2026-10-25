@@ -188,6 +188,15 @@ scripts/build-ghosttykit.sh   # once: builds libghostty → GhosttyKit.xcframewo
 scripts/install.sh            # optimized build → /Applications/Tako.app, then opens it
 ```
 
+**Without Xcode:** every push to `main` builds the app in CI. With the [GitHub CLI](https://cli.github.com) signed in:
+
+```sh
+gh run download -R nikshepsvn/kuronami -n Kuronami-app \
+  $(gh run list -R nikshepsvn/kuronami -w macos.yml -b main -s success -L 1 --json databaseId -q '.[0].databaseId')
+ditto -x -k Kuronami.zip /Applications && xattr -dr com.apple.quarantine /Applications/Kuronami.app
+open /Applications/Kuronami.app
+```
+
 You also need [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and/or [Codex](https://github.com/openai/codex) installed and signed in. Agents' browser tools need Node.js. Nothing in your global config is touched: hooks, MCP servers and the statusLine are attached per launch ([details](#nothing-global-is-modified)).
 
 ### Your first minute
