@@ -204,8 +204,11 @@ struct ControlHandler {
         case .hook:
             // Hook events only count when the kernel traces them to the session they describe.
             guard let session = callerSession else { return .success() }
-            store.handleHook(source: request.source ?? "", session: session, payload: request.payload ?? "{}", sentAt: request.sentAt)
-            return .success()
+            let payload = request.payload ?? "{}"
+            store.handleHook(source: request.source ?? "", session: session, payload: payload, sentAt: request.sentAt)
+            // `ht hook` prints this for the CLI: Codex's hooks, and Claude's without the listener.
+            let advice = store.adviseEditHook(sessionID: session.id.uuidString, payload: Data(payload.utf8))
+            return .success(text: advice.map { String(decoding: $0, as: UTF8.self) })
         case .statusline:
             guard let session = callerSession else { return .success() }
             store.handleStatusLine(session: session, payload: request.payload ?? "{}")
@@ -424,7 +427,8 @@ struct ControlHandler {
             }
             let brief = task + "\n\n(Delegated by @\(parent.label) through Tako. When you finish, use send_message to tell @\(parent.label) what you did and where.)"
             Task { @MainActor [spec] in
-                let child = await store.launch(spec, select: false, worktree: worktree, task: brief)
+                let briefed = await store.withTeamBoard(brief, folder: cwd)
+                let child = await store.launch(spec, select: false, worktree: worktree, task: briefed)
                 child.record(.note, "Started by @\(parent.label)")
                 parent.record(.note, "Delegated to @\(child.label)")
                 var response = ControlResponse.success(text: "started @\(child.label); it will message you when done")
@@ -515,7 +519,8 @@ struct ControlHandler {
                                       kind: kind, cwd: folder)
                 if spec.labelSource == .user { spec.labelSource = .agent }
                 spec.options = AppSettings.defaultMode.map { AgentOptions(mode: $0) }
-                let child = await store.launch(spec, select: false, isolateIfPossible: isolate, task: task)
+                let briefed = await store.withTeamBoard(task, folder: folder)
+                let child = await store.launch(spec, select: false, isolateIfPossible: isolate, task: briefed)
                 if autoTrust { store.startupGate.trustOnStart(child.id) }
                 child.record(.note, "Started by Sumi")
                 batch.started[index] = child

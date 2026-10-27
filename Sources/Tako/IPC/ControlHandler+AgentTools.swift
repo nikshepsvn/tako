@@ -33,28 +33,49 @@ extension ControlHandler {
 
     // MARK: - wait_for
 
+    static let maxWaitTargets = 16
+
+    /// One terminal, or several (`terminals`) with `mode` all or any; each follows read's rules.
     func waitFor(_ request: ControlRequest, reply: @escaping ControlServer.Reply) {
-        let target: TerminalSession
-        switch readable(request.target) {
-        case .success(let session): target = session
-        case .failure(let response): reply(response); return
+        let names = ([request.target] + (request.targets ?? []).map { Optional($0) })
+            .compactMap { $0?.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        guard names.count <= Self.maxWaitTargets else { return reply(.failure("wait on at most \(Self.maxWaitTargets) terminals at once")) }
+        var targets: [TerminalSession] = []
+        for name in names.isEmpty ? [nil] : names.map(Optional.some) {
+            switch readable(name) {
+            case .success(let session):
+                if session.id == callerSession?.id { return reply(.failure("that's you; wait on another terminal")) }
+                if !targets.contains(where: { $0 === session }) { targets.append(session) }
+            case .failure(let response):
+                return reply(response)
+            }
         }
-        if target.id == callerSession?.id { reply(.failure("that's you; wait on another terminal")); return }
         let timeout = TimeInterval(max(1, min(request.timeout ?? agentWaitDefault, agentWaitMax)))
+        let goal: (AgentWait.Goal, NSRegularExpression?)
+        switch waitGoal(request, targets) {
+        case .success(let parsed): goal = parsed
+        case .failure(let response): return reply(response)
+        }
+        if targets.count == 1 {
+            return store.startWait(on: targets[0], caller: callerSession?.id, goal: goal.0, regex: goal.1, timeout: timeout, reply: reply)
+        }
+        guard let mode = WaitGroup.Mode(rawValue: request.mode ?? "all") else { return reply(.failure("mode must be all or any")) }
+        store.startGroupWait(on: targets, caller: callerSession?.id, goal: goal.0, regex: goal.1, mode: mode, timeout: timeout, reply: reply)
+    }
+
+    /// What the wait is for: a pattern in the output, or `until` (done by default).
+    private func waitGoal(_ request: ControlRequest, _ targets: [TerminalSession]) -> Checked<(AgentWait.Goal, NSRegularExpression?)> {
         if let pattern = request.pattern, !pattern.isEmpty {
-            guard let regex = LogTail.regex(pattern) else { reply(.failure("pattern is empty")); return }
-            store.startWait(on: target, caller: callerSession?.id, goal: .output, regex: regex, timeout: timeout, reply: reply)
-            return
+            guard let regex = LogTail.regex(pattern) else { return .failure(.failure("pattern is empty")) }
+            return .success((.output, regex))
         }
         guard let goal = AgentWait.Goal(rawValue: request.text ?? "done"), goal != .output else {
-            reply(.failure("until must be done, needs-input or exited (or pass a pattern)"))
-            return
+            return .failure(.failure("until must be done, needs-input or exited (or pass a pattern)"))
         }
-        if !target.kind.isAgent, goal == .needsInput {
-            reply(.failure("@\(target.label) is a \(target.kind.displayName.lowercased()); only agents wait for input"))
-            return
+        if goal == .needsInput, let other = targets.first(where: { !$0.kind.isAgent }) {
+            return .failure(.failure("@\(other.label) is a \(other.kind.displayName.lowercased()); only agents wait for input"))
         }
-        store.startWait(on: target, caller: callerSession?.id, goal: goal, regex: nil, timeout: timeout, reply: reply)
+        return .success((goal, nil))
     }
 
     // MARK: - agent_changes

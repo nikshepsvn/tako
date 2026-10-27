@@ -6,10 +6,14 @@ import Foundation
 /// instead of a new `ht` process. One request per connection. Each request names its session
 /// (`X-HT-Session`) and carries that session's token (`Authorization: Bearer`), both read from the
 /// agent's own environment; tokens are derived from a secret that exists only in this process,
-/// so a token can't be forged for another session. The reply is sent before the payload is
-/// parsed: these events carry no decision.
+/// so a token can't be forged for another session. The reply is sent before the store sees the
+/// event: these events carry no decision. The one thing a reply may carry is the advisor's
+/// heads-up for an edit inside another agent's file claim (ClaimAdvisor).
 final class HookServer: @unchecked Sendable {
     typealias Handler = @Sendable (_ source: String, _ sessionID: String, _ body: Data, _ sentAt: UInt64) -> Void
+    /// A JSON body for the reply, or nil for an empty one. Runs on the connection's thread, so
+    /// it must answer from memory.
+    typealias Advisor = @Sendable (_ sessionID: String, _ body: Data) -> Data?
 
     static let path = "/hook/claude"
     private static let maxRequestBytes = 16_000_000
@@ -32,6 +36,7 @@ final class HookServer: @unchecked Sendable {
     }
 
     private let handler: Handler
+    private let advisor: Advisor?
     /// How long one connection may take to deliver its whole request.
     private let connectionDeadline: UInt64
     private var listenFD: Int32 = -1
@@ -43,8 +48,9 @@ final class HookServer: @unchecked Sendable {
     /// Connections are read in parallel, so one idle or slow socket can't hold up the rest.
     private let readQueue = DispatchQueue(label: "dev.tako.hooks.read", qos: .userInitiated, attributes: .concurrent)
 
-    init(connectionDeadline: TimeInterval = 5, handler: @escaping Handler) {
+    init(connectionDeadline: TimeInterval = 5, advisor: Advisor? = nil, handler: @escaping Handler) {
         self.connectionDeadline = UInt64(connectionDeadline * 1_000_000_000)
+        self.advisor = advisor
         self.handler = handler
     }
 
@@ -115,7 +121,7 @@ final class HookServer: @unchecked Sendable {
         // Stamped on the serial queue, so stamps rise in the order the store gets them: a slow
         // read finishing late isn't dropped as older than events queued before it.
         ioQueue.async { handler("claude", session, body, clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) }
-        reply(client, status: "200 OK")
+        reply(client, status: "200 OK", body: advisor?(session, body))
     }
 
     /// Reads one request until its Content-Length has arrived or `deadline` (uptime ns) passes.
@@ -151,9 +157,11 @@ final class HookServer: @unchecked Sendable {
         }
     }
 
-    private func reply(_ client: Int32, status: String) {
-        let head = Data("HTTP/1.1 \(status)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
-        _ = head.withUnsafeBytes { write(client, $0.baseAddress, head.count) }
+    private func reply(_ client: Int32, status: String, body: Data? = nil) {
+        let type = body == nil ? "" : "Content-Type: application/json\r\n"
+        var message = Data("HTTP/1.1 \(status)\r\n\(type)Content-Length: \(body?.count ?? 0)\r\nConnection: close\r\n\r\n".utf8)
+        if let body { message.append(body) }
+        _ = message.withUnsafeBytes { write(client, $0.baseAddress, message.count) }
     }
 }
 

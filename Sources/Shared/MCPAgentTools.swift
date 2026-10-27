@@ -8,16 +8,17 @@ import Foundation
 let agentToolDefinitions: [[String: Any]] = [
     [
         "name": "wait_for",
-        "description": "Wait for another terminal instead of polling read_terminal. until done (default): its turn ends (idle, failed, exited) or it waits on the user; returns at once if already at rest. pattern: instead wait for a new output line matching this regex (e.g. \"ready|error\"). Returns its state and summary, or the line.",
+        "description": "Wait for another terminal instead of polling read_terminal. until done (default): its turn ends (idle, failed, exited) or it waits on the user; returns at once if already at rest. pattern: instead wait for a new output line matching this regex (e.g. \"ready|error\"). Returns its state and summary, or the line. terminals: wait on several, until all (default) or any is done; returns each one's outcome.",
         "inputSchema": [
             "type": "object",
             "properties": [
                 "terminal": ["type": "string", "description": "Label, e.g. \"@api\""],
+                "terminals": ["type": "array", "items": ["type": "string"]],
+                "mode": ["type": "string", "enum": ["all", "any"]],
                 "until": ["type": "string", "enum": ["done", "needs-input", "exited"]],
                 "pattern": ["type": "string"],
                 "timeout": ["type": "integer", "description": "Seconds (default 600, max 1500)"],
             ],
-            "required": ["terminal"],
         ],
     ],
     [
@@ -89,6 +90,9 @@ func agentToolRequest(_ name: String, _ arguments: [String: Any]) -> ControlRequ
     case "wait_for":
         req = ControlRequest(cmd: .wait)
         req.target = arguments["terminal"] as? String
+        req.targets = (arguments["terminals"] as? [String])
+            ?? (arguments["terminals"] as? String).map { $0.split(separator: ",").map(String.init) }
+        req.mode = arguments["mode"] as? String
         req.text = arguments["until"] as? String
         req.pattern = arguments["pattern"] as? String
         req.timeout = arguments["timeout"] as? Int

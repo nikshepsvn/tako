@@ -126,6 +126,30 @@ struct TeamBoard {
         notes.append(note)
         if notes.count > Self.noteCap { notes.removeFirst(notes.count - Self.noteCap) }
     }
+
+    /// A new agent's brief starts it where the others are: the latest notes and live claims, in
+    /// at most `limit` characters. Nil for an empty board, so a brief without one is unchanged.
+    func briefSection(project: String, now: Date = Date(), limit: Int = 600) -> String? {
+        let live = claims.filter { $0.expires > now }
+        guard !notes.isEmpty || !live.isEmpty else { return nil }
+        let head = "Team board for \(project) (team_board read for all of it):"
+        var claimLine: String?
+        if !live.isEmpty {
+            let byOwner = Dictionary(grouping: live, by: \.ownerLabel)
+            claimLine = "Claimed: " + byOwner.keys.sorted().map { "@\($0) " + byOwner[$0]!.map(\.path).joined(separator: ", ") }
+                .joined(separator: "; ")
+            claimLine = Self.clip(claimLine!, 200)
+        }
+        var noteLines = notes.suffix(5).map { "- @\($0.author): " + Self.clip($0.text.split(whereSeparator: \.isNewline).joined(separator: " "), 110) }
+        func text() -> String { ([head] + noteLines + (claimLine.map { [$0] } ?? [])).joined(separator: "\n") }
+        // The oldest notes give way first; claims say who to talk to before editing.
+        while text().count > limit, !noteLines.isEmpty { noteLines.removeFirst() }
+        return Self.clip(text(), limit)
+    }
+
+    private static func clip(_ text: String, _ limit: Int) -> String {
+        text.count <= limit ? text : String(text.prefix(limit - 1)) + "…"
+    }
 }
 
 // MARK: - Logs

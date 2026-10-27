@@ -29,6 +29,8 @@ struct AgentWait {
     let regex: NSRegularExpression?
     /// Output waits: how far the target's output has been checked.
     var cursor: String
+    /// Set for one target of a wait on several (SessionStore+WaitGroup), which counts once.
+    var group: UUID? = nil
     let reply: ControlServer.Reply
 }
 
@@ -53,14 +55,8 @@ extension SessionStore {
             reply(.success(text: "@\(target.label) has exited (\(target.state.detail ?? "")); nothing more will print"))
             return
         }
-        if let caller, agentTools.waits.values.filter({ $0.caller == caller }).count >= Self.waitCapPerCaller {
-            reply(.failure("you already have \(Self.waitCapPerCaller) waits open; let one finish first"))
-            return
-        }
-        let id = UUID()
-        let cursor = goal == .output ? LogTail.cursor(LogTail.lines(recentOutput(of: target, lines: Self.outputWindow))) : ""
-        agentTools.waits[id] = AgentWait(target: target.id, caller: caller, goal: goal, regex: regex, cursor: cursor, reply: reply)
-        if goal == .output { ensureOutputPoll() }
+        if let refusal = waitCapRefusal(caller) { return reply(refusal) }
+        let id = registerWait(on: target, caller: caller, goal: goal, regex: regex, group: nil, reply: reply)
         DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, let wait = self.agentTools.waits.removeValue(forKey: id) else { return }
@@ -68,6 +64,24 @@ extension SessionStore {
                 wait.reply(.success(text: "timed out after \(Int(timeout)) s; \(now)"))
             }
         }
+    }
+
+    /// The refusal for a caller already holding the most waits; a wait on several counts once.
+    func waitCapRefusal(_ caller: UUID?) -> ControlResponse? {
+        guard let caller else { return nil }
+        let open = Set(agentTools.waits.filter { $0.value.caller == caller }.map { $0.value.group ?? $0.key })
+        guard open.count >= Self.waitCapPerCaller else { return nil }
+        return .failure("you already have \(Self.waitCapPerCaller) waits open; let one finish first")
+    }
+
+    /// Holds `reply` until the target's state or output answers it; the caller times it out.
+    func registerWait(on target: TerminalSession, caller: UUID?, goal: AgentWait.Goal, regex: NSRegularExpression?,
+                      group: UUID?, reply: @escaping ControlServer.Reply) -> UUID {
+        let id = UUID()
+        let cursor = goal == .output ? LogTail.cursor(LogTail.lines(recentOutput(of: target, lines: Self.outputWindow))) : ""
+        agentTools.waits[id] = AgentWait(target: target.id, caller: caller, goal: goal, regex: regex, cursor: cursor, group: group, reply: reply)
+        if goal == .output { ensureOutputPoll() }
+        return id
     }
 
     /// Why a wait is over, or nil while it isn't. `done` is the turn ending: idle with no
@@ -125,6 +139,7 @@ extension SessionStore {
             finishWait(id, "@\(session.label) was closed")
         }
         releaseAllClaims(of: session)
+        claimIndex.register(session.id, nil)
         agentTools.lastNotified[session.id] = nil
     }
 
@@ -260,6 +275,7 @@ extension SessionStore {
         var board = board(key)
         let result = board.claim(paths, owner: session.id, label: session.label, until: Date().addingTimeInterval(TimeInterval(minutes * 60)))
         agentTools.boards[key] = board
+        syncClaimIndex()
         var lines: [String] = []
         if !result.claimed.isEmpty {
             lines.append("claimed for \(minutes) min: " + result.claimed.joined(separator: ", "))
@@ -298,6 +314,7 @@ extension SessionStore {
         var board = board(key)
         let released = board.release(paths, owner: session.id)
         agentTools.boards[key] = board
+        syncClaimIndex()
         return released.isEmpty ? "you held none of those" : "released " + released.joined(separator: ", ")
     }
 
@@ -305,12 +322,30 @@ extension SessionStore {
         for key in agentTools.boards.keys where agentTools.boards[key]?.claims.contains(where: { $0.owner == session.id }) == true {
             agentTools.boards[key]?.release(nil, owner: session.id)
         }
+        if !claimIndex.isEmpty { syncClaimIndex() }
     }
 
     /// A session's live claims, for list_terminals.
     func claims(of session: TerminalSession, now: Date = Date()) -> [String]? {
         let held = agentTools.boards.values.flatMap(\.claims).filter { $0.owner == session.id && $0.expires > now }.map(\.path)
         return held.isEmpty ? nil : held
+    }
+
+    /// `task` with the team board of the project at `folder` after it, when the board has notes
+    /// or live claims; otherwise `task` unchanged. Git finds the project off main.
+    func withTeamBoard(_ task: String, folder: String) async -> String {
+        let path = (expandTilde(folder) as NSString).standardizingPath
+        let key: String
+        if let known = agentTools.projectKeys[path] {
+            key = known
+        } else if let main = sessions.first(where: { $0.git?.root == path })?.git?.mainRoot {
+            key = main
+        } else {
+            key = await Task.detached(priority: .userInitiated) { Review.mainRoot(of: path) ?? path }.value
+            agentTools.projectKeys[path] = key
+        }
+        guard let section = board(key).briefSection(project: Self.projectName(key)) else { return task }
+        return task + "\n\n" + section
     }
 
     static func projectName(_ key: String) -> String {
