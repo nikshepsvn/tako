@@ -497,11 +497,7 @@ extension SessionStore {
     }
 
     /// Tokens and keys don't belong in a notes file the whole Mac can read.
-    static func looksSecret(_ text: String) -> Bool {
-        let patterns = [#"\b(sk|pk|rk)[-_][A-Za-z0-9_-]{16,}"#, #"\bgh[pousr]_[A-Za-z0-9]{20,}"#, #"\bAKIA[0-9A-Z]{16}\b"#,
-                        #"-----BEGIN [A-Z ]*PRIVATE KEY"#, #"\b(password|passwd|api[_-]?key|token)\s*[:=]\s*\S{6,}"#]
-        return patterns.contains { text.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }
-    }
+    static func looksSecret(_ text: String) -> Bool { SecretScan.reason(text) != nil }
 }
 
 extension SessionStore {
