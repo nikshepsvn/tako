@@ -60,8 +60,8 @@ final class TakoLink: ObservableObject {
     @Published var inbox: [LinkInboxItem] = []
     /// Peer messages that arrived while Sumi wasn't running; delivered once it is.
     var undelivered: [String] = []
-    /// Asks from peers that Sumi may answer: request id → the asking peer's fingerprint.
-    var openAsks: [String: String] = [:]
+    /// Asks from peers that Sumi may answer, by a request id Tako made here (never the peer's).
+    var openAsks: [String: LinkOpenAsk] = [:]
     /// Asks Sumi sent: request id → the peer asked. Only these may come back as answers.
     var sentAsks: [String: String] = [:]
     var incomingLimit = LinkRateLimit(limit: 30, window: 60)
@@ -96,10 +96,11 @@ final class TakoLink: ObservableObject {
 
     var peers: [Peer] { settings.peers }
 
+    /// The paired peer with exactly this name (ignoring case) or full fingerprint. No prefixes or
+    /// guesses: a message must never reach a different friend than the one named.
     func peer(named name: String) -> Peer? {
-        let wanted = name.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "@")).lowercased()
-        return peers.first { $0.name.lowercased() == wanted || $0.fingerprint.hasPrefix(wanted) && wanted.count >= 4 }
-            ?? peers.first { $0.name.lowercased().hasPrefix(wanted) && !wanted.isEmpty }
+        let wanted = name.trimmingCharacters(in: .whitespaces).lowercased()
+        return peers.first { $0.name.lowercased() == wanted || $0.fingerprint == wanted }
     }
 
     func peer(fingerprint: String) -> Peer? { peers.first { $0.fingerprint == fingerprint } }
@@ -128,7 +129,7 @@ final class TakoLink: ObservableObject {
         settings.peers.removeAll { $0.publicKey == peer.publicKey }
         save()
         open.removeValue(forKey: peer.fingerprint)?.channel.close("unpaired")
-        openAsks = openAsks.filter { $0.value != peer.fingerprint }
+        openAsks = openAsks.filter { $0.value.fingerprint != peer.fingerprint }
         sentAsks = sentAsks.filter { $0.value != peer.fingerprint }
         EventLog.record("link", "unpaired \(peer.name)", fields: ["peer": peer.name, "fingerprint": peer.fingerprint])
     }
@@ -322,6 +323,10 @@ final class TakoLink: ObservableObject {
             audit("dropped", peer: peer, kind: message.kind, bytes: bytes, note: "too large")
             return
         }
+        guard message.hasValidIDs else {
+            audit("dropped", peer: peer, kind: message.kind, bytes: bytes, note: "malformed id")
+            return
+        }
         guard incomingLimit.allow(peer.fingerprint, now: now) else {
             audit("dropped", peer: peer, kind: message.kind, bytes: bytes, note: "rate limited")
             return
@@ -480,6 +485,12 @@ final class LinkConnection {
     func cancel() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [connection] in connection.cancel() }
     }
+}
+
+/// A peer's ask Sumi may answer: who asked, and the id their Tako gave it.
+struct LinkOpenAsk: Equatable {
+    var fingerprint: String
+    var remoteID: String
 }
 
 /// An outgoing message Sumi wrote in a turn that wasn't the user's: it waits for their Send,

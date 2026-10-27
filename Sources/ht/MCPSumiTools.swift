@@ -146,8 +146,9 @@ let sumiBoardToolDefinitions: [[String: Any]] = [
         "description": """
         Tako Link: the user's friends' Takos on the same network, whose Sumis you talk to. list: paired peers (online or \
         not) and asks waiting for your answer. send: a chat to peer. ask: ask peer's Sumi for context; the answer arrives \
-        later as a <peer-message>. answer: reply to an ask by its request_id. It goes out at once only in a turn the user \
-        started; otherwise the user approves the exact text first. Text that looks like a token or key is refused.
+        later as a <peer-message>. answer: reply to an ask by its request_id. It goes out at once only when the user typed \
+        that exact text in this turn ("tell Alex: back in 10"); anything else, the user approves the exact text first. \
+        peer must be a paired name exactly. Text that looks like a token or key is refused.
         """,
         "inputSchema": [
             "type": "object",

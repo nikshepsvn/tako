@@ -38,6 +38,15 @@ struct LinkMessage: Codable, Equatable {
     static func newID(_ prefix: String) -> String {
         prefix + "-" + LinkCrypto.random(4).map { String(format: "%02x", $0) }.joined()
     }
+
+    /// Whether an id has exactly the shape `newID` makes. Ids come from the peer, so anything else
+    /// (quotes, brackets, text) is refused before it can reach Sumi's prompt.
+    static func isValidID(_ id: String) -> Bool {
+        id.range(of: "^[a-z]-[0-9a-f]{8}$", options: .regularExpression) != nil
+    }
+
+    /// Every peer-supplied id in the message is well formed.
+    var hasValidIDs: Bool { Self.isValidID(id) && requestID.map(Self.isValidID) ?? true }
 }
 
 /// Splits a TCP byte stream into length-prefixed frames.

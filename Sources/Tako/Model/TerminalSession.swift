@@ -106,6 +106,9 @@ final class TerminalSession: ObservableObject, Identifiable {
     /// The current turn began with the user's own prompt: not another agent's message, not a
     /// Tako event digest, not a channel event. Sumi's `user_requested` counts only in such a turn.
     var turnFromUser = true
+    /// The prompt the user typed to start the current turn, while `turnFromUser`: Tako Link sends
+    /// Sumi's message without asking only when the user wrote its text themselves.
+    var userPrompt: String?
     /// Its CLI's prompt and stop hooks report turns (a Codex with hooks on), so turns aren't
     /// guessed from work starting.
     var reportsTurnsByHook = false

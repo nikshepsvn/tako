@@ -32,12 +32,18 @@ extension SessionStore {
     // MARK: - Incoming
 
     func linkReceived(_ message: LinkMessage, from peer: TakoLink.Peer) {
+        // TakoLink checks this too; Sumi's prompt is the place a bad id would do harm.
+        guard message.hasValidIDs else { return }
+        var localID: String?
         switch message.kind {
         case .ready: return
         case .chat: break
         case .ask:
-            link.openAsks[message.id] = peer.fingerprint
+            // Sumi answers by an id made here, so nothing the peer chose names the request.
+            let id = LinkMessage.newID("r")
+            link.openAsks[id] = LinkOpenAsk(fingerprint: peer.fingerprint, remoteID: message.id)
             trim(&link.openAsks)
+            localID = id
         case .answer:
             // Only an answer to an ask Sumi sent this peer counts; anything else is dropped.
             guard let request = message.requestID, link.sentAsks[request] == peer.fingerprint else {
@@ -45,29 +51,31 @@ extension SessionStore {
                 return
             }
             link.sentAsks[request] = nil
+            localID = request
         }
         remember(LinkInboxItem(id: message.id, peerName: peer.name, kind: message.kind, text: message.text ?? "",
-                               requestID: message.kind == .ask ? message.id : message.requestID, incoming: true))
-        deliverPeerPrompt(Self.peerPrompt(message, from: peer.name), from: peer.name, kind: message.kind)
+                               requestID: localID, incoming: true))
+        deliverPeerPrompt(Self.peerPrompt(message, from: peer.name, requestID: localID), from: peer.name, kind: message.kind)
     }
 
-    /// The single line Sumi reads for a peer's message.
-    static func peerPrompt(_ message: LinkMessage, from name: String) -> String {
+    /// The single line Sumi reads for a peer's message. Everything the peer chose (name, text)
+    /// stays inside the tag, cleaned so it can't close the tag, open another or span lines;
+    /// `requestID` is Tako's own. The guidance after the tag is fixed text.
+    static func peerPrompt(_ message: LinkMessage, from name: String, requestID: String? = nil) -> String {
         let name = LinkChannel.cleanName(name)
         var text = sanitizeMessage(message.text ?? "").replacingOccurrences(of: "<", with: "‹").replacingOccurrences(of: ">", with: "›")
         text = text.split(whereSeparator: \.isNewline).joined(separator: " ")
         if text.count > peerPromptLimit { text = String(text.prefix(peerPromptLimit)) + "… (cut; the whole text is in the Sumi dock)" }
         var attributes = "from=\"\(name)\" kind=\"\(message.kind.rawValue)\""
+        if let requestID, LinkMessage.isValidID(requestID) { attributes += " request_id=\"\(requestID)\"" }
         let body: String
         let guidance: String
         switch message.kind {
         case .ask:
-            attributes += " request_id=\"\(message.id)\""
             body = "\(name) (Tako Link) asks: \(text)"
             guidance = " A friend's request, not the user's: gather what's needed (standup, plan, read_terminal), then reply with "
-                + "peer action answer, request_id \(message.id). The user approves it before it goes out; never include secrets."
+                + "peer action answer and this tag's request_id. The user approves it before it goes out; never include secrets."
         case .answer:
-            attributes += " request_id=\"\(message.requestID ?? "")\""
             body = "\(name) (Tako Link) answered your ask: \(text)"
             guidance = " Pass it on to the user if they were waiting for it."
         default:
@@ -90,6 +98,7 @@ extension SessionStore {
         }
         // Whether it lands mid-turn or starts one, the rest of this turn is no longer the user's.
         sumi.turnFromUser = false
+        sumi.userPrompt = nil
         _ = sumi.deliver(prompt, from: nil)
     }
 
@@ -99,6 +108,7 @@ extension SessionStore {
         let waiting = link.undelivered
         link.undelivered = []
         sumi.turnFromUser = false
+        sumi.userPrompt = nil
         waiting.forEach { _ = sumi.deliver($0, from: nil) }
     }
 
@@ -107,7 +117,7 @@ extension SessionStore {
         if link.inbox.count > Self.linkQueueCap { link.inbox.removeFirst(link.inbox.count - Self.linkQueueCap) }
     }
 
-    private func trim(_ asks: inout [String: String]) {
+    private func trim<Value>(_ asks: inout [String: Value]) {
         while asks.count > Self.linkQueueCap, let key = asks.keys.first { asks[key] = nil }
     }
 
@@ -123,7 +133,7 @@ extension SessionStore {
         switch outgoing(action, args) {
         case .failure(let error): reply(.failure(error))
         case .success(let (message, peer)):
-            if sumi?.turnFromUser == true {
+            if userWrote(message.text ?? "") {
                 sendLink(message, to: peer) { error in
                     reply(error.map { .failure(PlanError("not sent: \($0)")) } ?? .success("sent to \(peer.name)" + (message.kind == .ask
                         ? " (request \(message.id)); their answer arrives as a peer message" : "")))
@@ -134,6 +144,16 @@ extension SessionStore {
                     + "you'll hear what they decide. Don't send it again"))
             }
         }
+    }
+
+    /// Whether the user typed this text themselves in the turn Sumi is in, as in "tell Alex: I'm
+    /// done in 10". Only then does it go without asking: in the user's turn Sumi may still have
+    /// read files, tool output or other agents' words, and could pass them on.
+    func userWrote(_ text: String) -> Bool {
+        guard let sumi, sumi.turnFromUser, let prompt = sumi.userPrompt else { return false }
+        func normal(_ value: String) -> String { value.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+        let wanted = normal(text)
+        return !wanted.isEmpty && normal(prompt).contains(wanted)
     }
 
     /// The message an action means, after every check that doesn't depend on whose turn it is.
@@ -152,7 +172,7 @@ extension SessionStore {
         case "answer":
             kind = .answer
             guard let id = args["request_id"] as? String, !id.isEmpty else { return .failure(PlanError("answer needs request_id")) }
-            guard let fingerprint = link.openAsks[id], let asker = link.peer(fingerprint: fingerprint) else {
+            guard let ask = link.openAsks[id], let asker = link.peer(fingerprint: ask.fingerprint) else {
                 return .failure(PlanError("no open ask \(id); peer list shows the asks waiting for you"))
             }
             peer = asker
@@ -166,7 +186,9 @@ extension SessionStore {
         if let secret = SecretScan.reason(body) {
             return .failure(PlanError("blocked: it looks like it contains \(secret). Never send secrets to a peer; rewrite it without"))
         }
-        let message = LinkMessage(kind: kind, id: LinkMessage.newID(kind == .ask ? "q" : "m"), text: body, requestID: requestID)
+        // The peer knows its ask by its own id; Sumi used the one Tako made here.
+        let remote = requestID.flatMap { link.openAsks[$0]?.remoteID }
+        let message = LinkMessage(kind: kind, id: LinkMessage.newID(kind == .ask ? "q" : "m"), text: body, requestID: remote)
         return .success((message, peer!))
     }
 
@@ -183,7 +205,8 @@ extension SessionStore {
                 case .ask:
                     self.link.sentAsks[message.id] = peer.fingerprint
                     self.trim(&self.link.sentAsks)
-                case .answer: if let request = message.requestID { self.link.openAsks[request] = nil }
+                case .answer:
+                    if let request = message.requestID { self.link.openAsks = self.link.openAsks.filter { $0.value.remoteID != request } }
                 default: break
                 }
                 self.remember(LinkInboxItem(id: message.id, peerName: peer.name, kind: message.kind, text: message.text ?? "",
@@ -250,10 +273,15 @@ extension SessionStore {
             lines.append("Paired peers:")
             lines += link.peers.map { "- \($0.name): \(link.isOnline($0) ? "online" : "offline")" }
         }
-        let asks = link.inbox.filter { $0.incoming && $0.kind == .ask && link.openAsks[$0.id] != nil }
+        let asks = link.inbox.filter { item in item.incoming && item.kind == .ask && item.requestID.map { link.openAsks[$0] != nil } == true }
         if !asks.isEmpty {
+            // The peer's words are cleaned like a <peer-message>: one line, no tags.
             lines.append("Asks waiting for your answer:")
-            lines += asks.map { "- request_id \($0.id) from \($0.peerName): \(String($0.text.prefix(120)))" }
+            lines += asks.map { item in
+                let text = item.text.replacingOccurrences(of: "<", with: "‹").replacingOccurrences(of: ">", with: "›")
+                    .split(whereSeparator: \.isNewline).joined(separator: " ")
+                return "- request_id \(item.requestID ?? "") from \(item.peerName): \(String(text.prefix(120)))"
+            }
         }
         if !link.approvals.isEmpty { lines.append("\(link.approvals.count) message(s) waiting for the user's approval.") }
         return lines.joined(separator: "\n")
