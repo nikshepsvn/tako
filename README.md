@@ -217,9 +217,13 @@ ht ls
 - **Stable positions.** Cards never reorder when states change, so ⌘1–9 and muscle memory keep working. Attention is shown, not sorted.
 - **Grid, split, or focus.** Every live terminal as a tile (⌘⌥3), the last two side by side (⌘⌥2), or one (⌘⌥1). ⌘⏎ zooms a tile.
 - **Resize anything.** Drag the gap between two tiles to resize them; it snaps to halves and thirds, and double-clicking evens that split out again. ⌥⌘0 evens out every tile. Split and grid each remember their own arrangement across launches.
-- **Arrange it your way.** Drag a tile by its header and drop it on another to trade places. Minimize a tile (⇧⌘M or the – on its header) to park it: it stays in the sidebar marked *Parked*, and a click brings it back. The tiles always get the whole canvas; with the sidebar hidden, a small pill in the canvas's corner lists your servers and parked tiles.
+- **Arrange it your way.** Drag a tile by its header: a preview shows where it lands. Drop it on half of another tile to split that tile, on its center to trade places, or along a canvas edge for a full-height column or full-width row; Esc cancels. ⌃⌥ + an arrow sends the selected tile to that side. A tile popped into its own window has a *Snap* menu (halves, quarters, fill) and *Dock Back*; dragging it to a screen edge uses macOS's own tiling. Minimize a tile (⇧⌘M or the – on its header) to park it: it stays in the sidebar marked *Parked*, and a click brings it back. The tiles always get the whole canvas; with the sidebar hidden, a small pill in the canvas's corner lists your servers and parked tiles.
 - **Close to hide.** The red close button hides the window and leaves agents running; the Dock or the menu bar brings it back. ⌘Q quits.
 - **Since you left.** Come back to an agent and a banner sums up what happened: edits, commands, approvals, tests, and the final answer.
+- **Standup.** ⌥⌘J (or *Standup* in ⌘P, or ⌥-click the waiting badge) lists every agent, needs-you first: state and for how long, current action, todos, diff, blocker and cost. Click a row to go there.
+- **Startup, in plain sight.** A new agent's card says *Starting…*, then *Waiting on folder trust* with the answer button, or *Exited* with its reason and last lines and a Restart button, and flags one that keeps crashing. It disappears once the agent is ready.
+- **What the Mac is spending.** The machine button at the end of the sidebar's footer shows Tako's own memory and its trend, the browser, the agents' total with the top three, memory pressure, MCP helpers, and processes Tako started that nothing owns any more, with Stop and *Run Doctor*. It turns into a gold *Tako N GB* tag when Tako itself gets heavy.
+- **Shapes, not just colors.** Each state has its own symbol (a half-filled ring for working, `!` for needs you, a check for done, an octagon for failed, a moon for asleep), so the sidebar reads without color.
 
 #### Start agents the way you want
 - **Quick Ask from anywhere.** ⌃⌥Space in any app opens a floating task field; Return starts an agent on it in its own worktree without leaving what you were doing. Drop files or images on any message field to attach them.
@@ -254,13 +258,23 @@ For when you step away. Phone Mode rides on Claude Code's Remote Control, so it'
 - **Nothing silently stuck.** A wait nobody answers reminds Sumi every 90 s, up to three times, and then goes to the Mac as usual. Tako's own confirmations, like starting a server, are skipped, since you asked from your phone.
 - **Back at the Mac,** turn it off from the same button or tell Sumi you're back.
 
+#### Tako Link
+Message a friend's Tako on the same Wi-Fi, Sumi to Sumi. Off by default: until you turn it on in **Settings ▸ Link**, Tako neither listens nor looks, so macOS shows no network prompts.
+- **Pair once.** Takos on the network find each other (Bonjour, `_tako._tcp`). Click *Pair* on your friend's name and both screens show the same 6-digit code; compare, then *Confirm*. Where Bonjour can't reach, `ht link add host:port`.
+- **Talk through Sumi.** *"tell Alex: back in 10"* or *"ask Alex: is your /auth endpoint ready?"*. Your friend's Sumi gathers what it needs from their agents and drafts an answer.
+- **Nothing leaves without a yes.** Only your exact words after `tell|message|ask|answer <name>:` go out on their own, once each. Anything Sumi writes itself waits on a card with the exact text and *Send · Edit · Deny*, and tokens and keys are blocked before anything is sent.
+- **A friend is never you.** Their messages reach Sumi marked as theirs: they can't approve a request, start or close an agent, or count as your turn.
+- **Encrypted, logged, limited.** Each pairing has its own keys; every connection is mutually authenticated with forward secrecy, and tampered or replayed frames close it. Receipts tell you a message actually reached your friend's Tako. `events.jsonl` records who, what kind and how big, never the text; 30 messages a minute and 32 KB each.
+- **For now,** both Takos must be open and on the same network.
+
 #### The steward
 Keeps the Mac responsive while agents run, without a model. On every inspector tick it measures each session's process tree: footprint (what Activity Monitor calls Memory) and CPU, shown as *Resources* in the inspector.
 - **Priority.** A session is *focused* (on screen, selected, pinned, or Sumi), *working*, *waiting* on you, or *idle*. Hidden waiting and idle sessions run at macOS background priority (`PRIO_DARWIN_BG`), and so do hidden working ones when the Mac's thermal state is serious or worse. Bring one on screen and its whole process tree is restored at once. Chromium's helpers are left alone so browser panes don't stutter.
 - **Admission.** When macOS reports memory pressure, a new agent from Sumi waits until there's room for a typical agent (the 75th percentile of the agents you're running, plus 20%), then starts in order. Sumi hears *"queued: memory is short"* right away. Ask Sumi to cap how many agents work at once.
 - **Sleep.** With *Put idle agents to sleep* on (Settings › General; on for new installs, off if you upgraded), an agent that has been idle for 10 minutes, with its own work quiet, quits its CLI to free its memory, even in a tile that's on screen. The tile keeps its last screen and the card shows a moon. The next message or keystroke, or *Wake* from its menu, resumes the same conversation in the same tile. Agents that are selected, pinned, mid-dialog, have text typed, queued messages, or subagents and background shells running stay awake. *Sleep* in an agent's menu does it by hand.
 - **Heavy jobs.** `ht heavy -- <command>` waits for one of a few slots, then runs the command: half your performance cores, halved again under memory pressure or heat, one when critical. A slot frees when the command exits. If Tako isn't reachable the command runs right away, so it's safe in scripts, Makefiles and your agents' instructions.
-- **Warnings.** A session over 3 GB, or an agent idle for 2 minutes while its processes keep using more than 15% CPU, raises one warning per episode. The steward never acts on it alone: it goes to Sumi, which checks the agent and tells you, and restarts or closes it only with your go-ahead.
+- **Warnings.** Memory reaches Sumi only when it matters: a session over 3 GB while macOS reports memory pressure, one that grows to 1.5× its own usual size (and at least 2 GB), or one over 12 GB. An agent idle for 5 minutes while its child processes keep burning CPU is a runaway. Otherwise the numbers just update in the inspector. The steward never acts on a warning alone: it goes to Sumi, which checks the agent and tells you, and restarts or closes it only with your go-ahead. Tako watches its own footprint too, and logs it hourly.
+- **Scrollback.** Each terminal keeps at most 10 MB of scrollback (Ghostty's own default), even if your Ghostty config asks for more; smaller settings apply as written.
 
 #### Answer approvals from anywhere
 - **Real approvals, not keystrokes.** Tako installs Claude's `PermissionRequest` hook (per launch, never in your global settings). The moment an agent asks, its card shows the exact command with **Allow / Always / Deny**. Always saves the rule Claude suggested, and Deny can carry a reason the agent sees. Claude's own dialog still works in the terminal, and whichever answer comes first wins.
@@ -378,6 +392,9 @@ ht read @web -n 50                              # recent output
 ht heavy -- xcodebuild test                     # wait for a heavy-job slot, then run
 ht key @api down enter                          # press keys
 ht layout grid   ·   ht focus @ui   ·   ht restart @web   ·   ht rename @api backend   ·   ht close @scratch
+ht doctor                                       # health: hooks, messages, memory trend, crash loops, channels
+ht link status   ·   ht link pair Alex   ·   ht link approve <id>   # Tako Link from the shell
+ht sumi                                         # start Sumi, as its button does
 ```
 
 ### Keyboard
@@ -387,6 +404,8 @@ ht layout grid   ·   ht focus @ui   ·   ht restart @web   ·   ht rename @api 
 | ⌘N / ⌘T / ⇧⌘C / ⇧⌘X | New terminal / shell here / Claude here / Codex here |
 | ⌘P | Go to a terminal, run an action, or `@label message` |
 | ⌘J | Jump to the agent waiting longest |
+| ⌥⌘J | Standup: every agent, needs-you first |
+| ⌃⌥ ← → ↑ ↓ | Move the selected tile to that side of the canvas |
 | ⌥⌘R / ⌥⌘I | Review changes / toggle inspector |
 | ⌃⌘O | Open or hide Sumi |
 | ⌥⌘O | Open the selected workspace in your editor |
@@ -424,7 +443,13 @@ scripts/run.sh                # build + launch the debug app (first build downlo
 scripts/install.sh            # optimized build → /Applications/Tako.app
 xcodebuild -project Tako.xcodeproj -scheme Tako -derivedDataPath build/DerivedData test
 scripts/linux-check.sh        # anywhere with Swift + Git: parse every file, design lint, pure-logic tests
+scripts/smoke.sh              # end to end on a hidden copy with its own data: ht, every agent tool, quit leaves
+                              # nothing running, restore, log rotation, parent death, the ~/.hyperterm migration
+scripts/soak.sh -m 15         # memory soak: fake agents replay real hook traffic; footprint and heap over time
+scripts/link-smoke.sh         # Tako Link between two hidden copies: discover, pair, ask, approve, answer
 ```
+
+Run the test copies' `ht` with `env -u HT_SOCKET -u HT_SESSION_ID -u HT_LABEL` when you're inside Tako: those variables point at the Tako you're in and win over `HT_HOME`. The scripts do this themselves.
 
 The interface is built on one design system, `Sources/Tako/UI/Design.swift`: six text styles, a 4-point spacing grid, three corner radii, sumi-ink neutrals with color from traditional pigments, reserved for meaning, and one motion curve that turns off with Reduce Motion. `scripts/lint-design.sh` fails on raw font sizes, radii or colors anywhere else.
 
@@ -443,6 +468,7 @@ Sources/Tako/IPC      control socket server and request handler (permissions)
 Sources/Tako/Launch   agent wrappers, per-launch hooks/statusLine/MCP config
 Sources/Tako/Steward  resource sampling, background priority, launch admission, heavy-job slots, sleep, warnings
 Sources/Tako/Browser  Chromium runtime (lazy start, DevTools port), browser surface and bar, Chrome logins import
+Sources/Tako/Link     Tako Link: Bonjour discovery, pairing codes, encrypted channel, Sumi-to-Sumi messages
 Sources/Tako/UI       Design (tokens + components), LayoutTree, sidebar, sumi, tiles, inspector, switcher, sheets
 Sources/TakoHelper    Chromium helper process (renderer, GPU, utility)
 Sources/ht            CLI, hook/permission/statusline entry points, stdio MCP server, browser MCP proxy
@@ -452,7 +478,7 @@ Tests/TakoTests       state machine, layout tree, checkpoints (real Git), agent 
 
 ### Status
 
-Tako is young and moves fast. On macOS 26 with Claude Code 2.1, it builds from source and passes its 355 tests (pure logic, the status state machine, the layout tree, checkpoints against real Git, Codex log parsing, accounts). These paths are verified live:
+Tako is young and moves fast. On macOS 26 with Claude Code 2.1, it builds from source and passes its 662 tests (pure logic, the status state machine, the layout tree, checkpoints against real Git, Codex log parsing, accounts, process lifecycle, the Link protocol, real libghostty teardown), and `scripts/smoke.sh` passes all 54 of its end-to-end checks. These paths are verified live:
 - labels and messaging
 - hook status
 - approvals from cards, notifications and `ht` (Allow / Always / Deny with reason)
