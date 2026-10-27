@@ -176,6 +176,9 @@ struct ControlHandler {
             create(request, reply: reply)
         case .act:
             actForSumi(request, reply: reply)
+        case .sumi:
+            guard callerSumi != nil else { reply(.failure("only Sumi keeps the board and its memory")); return }
+            handleSumi(request, reply: reply)
         default:
             reply(handle(request))
         }
@@ -277,7 +280,7 @@ struct ControlHandler {
             guard let target = callerSession ?? (isUser ? resolve(request.target) : nil) else { return notFound(request.target) }
             store.sessionWantsAttention(target, title: "@\(target.label)", body: sanitizeMessage(request.text ?? ""))
             return .success()
-        case .permission, .subscribe, .browser, .heavy, .act:
+        case .permission, .subscribe, .browser, .heavy, .act, .sumi:
             return .success()
         }
     }
@@ -463,7 +466,8 @@ struct ControlHandler {
                 guard batch.started.count == count, !batch.replied else { return }
                 let ordered = batch.started.sorted { $0.key < $1.key }.map(\.value)
                 let labels = ordered.map { "@" + $0.label }.joined(separator: ", ")
-                var response = ControlResponse.success(text: "started \(labels) in \(abbreviateHome(expandTilde(folder)))")
+                var response = ControlResponse.success(text: "started \(labels) in \(abbreviateHome(expandTilde(folder)))"
+                    + store.projectBrief(for: folder))
                 response.session = ordered.first?.info()
                 reply(response)
             } }
@@ -648,7 +652,9 @@ struct ControlHandler {
         guard target.kind.isAgent, !target.isSumi else { return .failure("only other agents can be watched") }
         let note = sanitizeMessage(request.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         store.sumiWatches[target.id] = String(note.prefix(1000))
-        return .success(text: "you'll get a message when @\(target.label) finishes its turn")
+        let repeats = request.label == "repeat"
+        store.sumiBrain.repeatWatches[target.id] = repeats ? String(note.prefix(1000)) : nil
+        return .success(text: "you'll get a message when @\(target.label) finishes " + (repeats ? "each turn, until it closes" : "its turn"))
     }
 
     /// The user handed a session's waits to Sumi: take them over, stop, or list.

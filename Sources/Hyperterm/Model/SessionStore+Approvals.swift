@@ -80,6 +80,7 @@ extension SessionStore {
         session.hasHookApproval = false
         session.heldToolCall = nil
         session.pendingPlan = nil
+        learnAnswer(session, approval: approval, answer: answer)
         approval.reply(ControlResponse.success(text: decisionJSON(approval, answer, reason: reason)))
         session.record(.approval, answer == .deny ? "Denied \(approval.summary)" : answer == .always ? "Always allowed \(approval.summary)" : "Allowed \(approval.summary)")
         session.apply(.userSubmitted, source: "approval", force: .working)

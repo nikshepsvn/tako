@@ -156,6 +156,25 @@ extension SessionStore {
                 : reason == TerminalSession.startupScreenReason ? "Left for you: Claude's startup screen" : "Left for you: signing in is your call")
             return false
         }
+        // The user always allows this here: answered as they would, a beat later, once the state
+        // change that brought it has settled. Sumi only hears it happened.
+        if learnedAlways(session) {
+            DispatchQueue.main.async { [weak self, weak session] in
+                guard let self, let session else { return }
+                if let key = self.approveAsUserAlwaysDoes(session) {
+                    self.addToSumiDigest(SumiEvent(label: session.label, kind: .autoApproved(key)))
+                } else if session.state.needsAttention, session.delegation != nil {
+                    self.tellSumiOfWait(session, reason: reason)
+                }
+            }
+            return true
+        }
+        tellSumiOfWait(session, reason: reason, now: now)
+        return true
+    }
+
+    private func tellSumiOfWait(_ session: TerminalSession, reason: String, now: Date = Date()) {
+        guard var delegation = session.delegation else { return }
         delegation.toldAt = now
         delegation.reminders = 0
         session.delegation = delegation
@@ -163,7 +182,6 @@ extension SessionStore {
                                   kind: .needsYou(waitDescription(session, reason: reason), note: delegation.note)),
                         urgent: true)
         scheduleDelegationSweep(after: Delegation.fallback)
-        return true
     }
 
     /// Scope accounting on each state change: a wait ending counts as handled; a used-up scope,
@@ -263,6 +281,9 @@ extension SessionStore {
             }
         }
         let denial = answer == .deny ? (reason ?? "Sumi denied this on the user's behalf.") : nil
+        // Sumi's own judgment isn't the user's to learn from; a yes it relays from their phone is.
+        sumiBrain.sumiAnswering = !(userApproved && phoneModeSince != nil)
+        defer { sumiBrain.sumiAnswering = false }
         switch self.answer(session, answer, reason: denial) {
         case .success(let done):
             session.record(.note, "Sumi answered: " + (answer == .deny ? "denied " : answer == .always ? "always allowed " : "allowed ") + summary)
@@ -519,6 +540,7 @@ extension SessionStore {
             text += " (sign_in gets a link and code for the user's phone)"
         } else if approvals[session.id] != nil || session.pendingRequest == reason {
             text += " (answer_prompt)"
+            if let precedent = approvalPrecedent(session) { text += " · " + precedent }
         }
         return text.split(whereSeparator: \.isNewline).joined(separator: " ")
     }

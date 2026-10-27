@@ -291,12 +291,13 @@ private let sumiToolDefinitions: [[String: Any]] = toolDefinitions.filter {
     ],
     [
         "name": "watch_terminal",
-        "description": "Get a message from Tako when an agent finishes its current or next turn (or fails or exits), with its last summary and your note. One message per call. Use it to chain work: hand one agent's result to the next.",
+        "description": "Get a message from Tako when an agent finishes its current or next turn (or fails or exits), with its last summary and your note. One message per call unless repeat is true. Use it to chain work: hand one agent's result to the next.",
         "inputSchema": [
             "type": "object",
             "properties": [
                 "terminal": ["type": "string", "description": "Label of the agent to wait on"],
                 "note": ["type": "string", "description": "What to do when it finishes, e.g. \"tell @web the new /orders endpoint is ready\""],
+                "repeat": ["type": "boolean", "description": "Hear every turn it finishes until it closes, not just the next one"],
             ],
             "required": ["terminal"],
         ],
@@ -498,7 +499,7 @@ private let sumiToolDefinitions: [[String: Any]] = toolDefinitions.filter {
             ],
         ],
     ],
-]
+] + sumiBoardToolDefinitions
 
 /// Tiles as the model writes them (bare labels as leaves) to the wire's `TileSpec`.
 private func tileSpec(_ value: Any) -> TileSpec? {
@@ -564,6 +565,7 @@ private func callTool(_ name: String, _ arguments: [String: Any], sessionID: Str
         req = ControlRequest(cmd: .watch)
         req.target = arguments["terminal"] as? String
         req.text = arguments["note"] as? String
+        req.label = (arguments["repeat"] as? Bool) == true ? "repeat" : nil
     case "session_history":
         req = ControlRequest(cmd: .history)
         req.text = "list"
@@ -667,7 +669,8 @@ private func callTool(_ name: String, _ arguments: [String: Any], sessionID: Str
         req.command = arguments["command"] as? String
         req.cwd = (arguments["cwd"] as? String).map { ($0 as NSString).expandingTildeInPath }
     default:
-        return ("unknown tool \(name)", true)
+        guard let board = sumiBoardRequest(name, arguments) else { return ("unknown tool \(name)", true) }
+        req = board
     }
     req.from = sessionID
 

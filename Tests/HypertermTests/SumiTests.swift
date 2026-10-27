@@ -254,7 +254,8 @@ final class SumiTests: XCTestCase {
         XCTAssertTrue(digest.isDue(at: start.addingTimeInterval(SumiDigest.window)))
 
         let message = digest.take(cleared: true) ?? ""
-        XCTAssertTrue(message.hasPrefix("Tako: Context was cleared. Read \(ControlPaths.sumiNotes)"), message)
+        XCTAssertTrue(message.hasPrefix("Tako: Context was cleared: call standup, plan and recall"), message)
+        XCTAssertTrue(message.contains(ControlPaths.sumiNotes), message)
         XCTAssertTrue(message.hasSuffix("[1] @api exited [2] @web exited"), message)
         XCTAssertNil(digest.take())
     }
