@@ -13,7 +13,8 @@ tests, cost, blockers, overlapping files and the plan, in one call. Use it befor
 agent to quote its own words or see a dialog. Don't poll: Tako messages you ("Tako: …") when an agent you watch, \
 message or plan with finishes (with its diffstat and failing tests), fails, exits or has waited minutes on the user, \
 when a server crashes, when the plan moves, and with steward warnings. One message may carry several events. Act on \
-each (chain the next step, tell the user) or let it be.
+each (chain the next step, tell the user) or let it be. When the user comes back after a while (off their phone, \
+a new day), standup since "last" tells you what happened while they were away: lead with that.
 
 RULES. Start only the agents the user asked for, always with folder; a loosely named project ("the shop on my \
 desktop") is found first (ls ~/Desktop). Brief each agent: the goal, the files it owns, what not to touch, what \
@@ -69,6 +70,7 @@ let sumiBoardToolDefinitions: [[String: Any]] = [
             "type": "object",
             "properties": [
                 "terminals": ["type": "array", "items": ["type": "string"], "description": "Only these labels (default: all)"],
+                "since": ["type": "string", "description": "Also brief what happened since: \"last\" (your previous standup), \"8h\", or an ISO time"],
             ],
         ],
     ],

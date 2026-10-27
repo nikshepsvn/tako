@@ -9,6 +9,9 @@ final class SumiBrain {
     var plan: SumiPlan { didSet { save(plan, "organizer-plan.json") } }
     var memory: SumiMemory { didSet { save(memory, "organizer-memory.json") } }
     var approvals: ApprovalMemory { didSet { save(approvals, "organizer-approvals.json") } }
+    /// When Sumi last called standup, so `standup since:"last"` covers exactly what it hasn't
+    /// seen, across a restart of Tako or a clear of Sumi's context.
+    var lastStandup: Date? { didSet { save(StandupMark(at: lastStandup), "organizer-standup.json") } }
 
     /// Watches that re-arm after each report (watch_terminal repeat): by session, with the note.
     var repeatWatches: [UUID: String] = [:]
@@ -29,7 +32,10 @@ final class SumiBrain {
         plan = Self.load("organizer-plan.json", in: directory) ?? SumiPlan()
         memory = Self.load("organizer-memory.json", in: directory) ?? SumiMemory()
         approvals = Self.load("organizer-approvals.json", in: directory) ?? ApprovalMemory()
+        lastStandup = (Self.load("organizer-standup.json", in: directory) as StandupMark?)?.at
     }
+
+    private struct StandupMark: Codable { var at: Date? }
 
     private static func load<T: Decodable>(_ name: String, in directory: URL?) -> T? {
         guard let url = directory?.appendingPathComponent(name), let data = try? Data(contentsOf: url) else { return nil }

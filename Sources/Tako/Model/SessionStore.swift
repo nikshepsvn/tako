@@ -41,6 +41,8 @@ final class SessionStore: ObservableObject {
     var overlapWatch = OverlapWatch()
     /// Worker agents' waits, team boards and notification limits (SessionStore+AgentTools).
     var agentTools = AgentToolsState()
+    /// Which agents reached their prompt and which keep exiting soon after starting (SessionStore+Health).
+    var startupHealth = StartupHealth()
     /// Called when a session's status changes. It can change which tiles show (grid hides exited
     /// sessions) and their chrome, but must not pull keyboard focus away from where the user is.
     var onStatusChange: (() -> Void)?
@@ -441,6 +443,7 @@ final class SessionStore: ObservableObject {
         if select { self.select(session) }
         persist()
         if !resume { startDevServerIfConfigured(for: session, config: prepared.config) } else { loadTurns(session) }
+        if !resume { recordAgentStart(session, restarted: false) }
         // Claude copies `.worktreeinclude` files into its own worktrees.
         if !resume, spec.kind != .claude, spec.worktreeBranch != nil { warmWorktree(session) }
         // Without a prompt hook (Codex), an agent started with a task never rests before its
@@ -503,6 +506,7 @@ final class SessionStore: ObservableObject {
         sessions.removeAll { $0.id == session.id }
         forgetOverlaps(with: session)
         agentToolsSessionClosed(session)
+        startupHealth.forget(session.id)
         childCancellables[session.id] = nil
         recent.removeAll { $0 == session.id }
         onRemove?(session)
@@ -633,6 +637,7 @@ final class SessionStore: ObservableObject {
         if previous == .working { markFinished(session) }
         onStatusChange?()
         reportToSumi(session, from: previous)
+        healthStateChanged(session, from: previous)
         adoptIntoPhoneMode(session)
         delegationStateChanged(session, from: previous)
         watchOverlaps(session, from: previous)

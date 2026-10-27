@@ -224,6 +224,7 @@ final class TerminalSession: ObservableObject, Identifiable {
         createdAt = Date()
         lastHookSentAt = 0
         apply(.processStarted, source: "restart", force: kind.isAgent ? .starting : .running)
+        store?.recordAgentStart(self, restarted: true)
         store?.sessionSurfaceReplaced(self)
     }
 

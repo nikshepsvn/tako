@@ -14,7 +14,8 @@ extension ControlHandler {
         switch request.text {
         case "standup":
             let only = (args["terminals"] as? [String]).flatMap { $0.isEmpty ? nil : $0 }
-            store.standup(only: only) { reply(.success(text: $0)) }
+            let since = (args["since"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            store.standup(only: only, since: since) { reply(.success(text: $0)) }
         case "plan":
             send(store.planCommand(args))
         case "remember":
