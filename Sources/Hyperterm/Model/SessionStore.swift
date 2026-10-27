@@ -636,25 +636,25 @@ final class SessionStore: ObservableObject {
             // Handed to Sumi: it hears instead, and the user only if it doesn't answer.
             if sumiTakesWait(session, reason: reason) { break }
             if !isVisible { session.unread = true }
-            notifier.post(session: session, title: "@\(session.label) needs you", body: reason, foreground: !isVisible)
+            notifier.post(session: session, title: "@\(session.label) needs you", body: reason, foreground: !isVisible, kind: .needsYou)
         case .idle where previous == .working && session.kind.isAgent && raceFinished(session):
             // Every agent on this task is done: one notification for the race, not one each.
             let all = [session] + raceSiblings(of: session)
             let changed = all.filter { ($0.diffStat?.files ?? 0) > 0 }.count
             notifier.post(session: session, title: "All \(all.count) agents finished",
                           body: "\(changed) changed files. Compare them side by side, then right-click the best → Pick This One.",
-                          foreground: !NSApp.isActive)
+                          foreground: !NSApp.isActive, kind: .finished)
         case .idle where previous == .working && session.kind.isAgent:
             if !isVisible {
                 session.unread = true
-                notifier.post(session: session, title: "@\(session.label) finished", body: session.summary ?? "Turn complete", foreground: false)
+                notifier.post(session: session, title: "@\(session.label) finished", body: session.summary ?? "Turn complete", foreground: false, kind: .finished)
             }
         case .failed(let reason):
             if !isVisible { session.unread = true }
-            notifier.post(session: session, title: "@\(session.label) failed", body: reason, foreground: !isVisible)
+            notifier.post(session: session, title: "@\(session.label) failed", body: reason, foreground: !isVisible, kind: .failed)
         case .exited(let code) where session.kind == .server && code != 0:
             session.unread = true
-            notifier.post(session: session, title: "@\(session.label) crashed", body: "exit \(code)", foreground: true)
+            notifier.post(session: session, title: "@\(session.label) crashed", body: "exit \(code)", foreground: true, kind: .crashed)
         default:
             break
         }

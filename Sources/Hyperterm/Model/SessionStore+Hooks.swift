@@ -124,6 +124,7 @@ extension SessionStore {
             // Another agent's message, or a wrapper the harness injected (a channel push, a task
             // notification), isn't the user's turn: no checkpoint, and the card keeps its summary.
             session.turnIsMessage = !(prompt.map(PromptOrigin.init) ?? .user).isUser
+            notifier.turnStarted(session)
             // A turn already opened before the hooks could report it isn't opened twice.
             if !session.turnIsMessage && !session.turnOpenedByGuess { checkpoint(session, phase: .start, prompt: prompt ?? "Turn") }
             session.turnOpenedByGuess = false

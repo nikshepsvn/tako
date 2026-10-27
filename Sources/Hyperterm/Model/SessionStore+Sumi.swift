@@ -385,7 +385,7 @@ extension SessionStore {
     private func restartSumiForPhone(_ exited: TerminalSession, now: Date = Date()) {
         sumiRestarts = sumiRestarts.filter { now.timeIntervalSince($0) < Self.sumiRestartWindow }
         guard sumiRestarts.count < Self.sumiRestartLimit else {
-            notifier.post(session: exited, title: "Sumi keeps stopping", body: "Phone Mode can't reach your agents until Sumi runs again. Open it on the Mac.", foreground: true)
+            notifier.post(session: exited, title: "Sumi keeps stopping", body: "Phone Mode can't reach your agents until Sumi runs again. Open it on the Mac.", foreground: true, kind: .crashed)
             return
         }
         sumiRestarts.append(now)

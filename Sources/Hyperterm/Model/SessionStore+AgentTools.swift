@@ -328,7 +328,7 @@ extension SessionStore {
         agentTools.lastNotified[session.id] = now
         session.record(.note, "Notified the user: \(text)")
         if !userIsLooking(at: session) { session.unread = true }
-        if notifiesUser { notifier.post(session: session, title: "@\(session.label)", body: text, foreground: true) }
+        if notifiesUser { notifier.post(session: session, title: "@\(session.label)", body: text, foreground: true, kind: .note) }
         onStatusChange?()
         return .success("the user was notified")
     }

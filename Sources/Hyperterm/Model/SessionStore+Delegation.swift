@@ -515,7 +515,7 @@ extension SessionStore {
         guard case .needsInput(let reason) = session.state else { return }
         if !userIsLooking(at: session) { session.unread = true }
         guard notifiesUser else { return }
-        notifier.post(session: session, title: "@\(session.label) needs you", body: reason, foreground: true)
+        notifier.post(session: session, title: "@\(session.label) needs you", body: reason, foreground: true, kind: .needsYou)
         if let approval = approvals[session.id] {
             notifier.postApproval(session: session, request: approval.summary, alwaysRule: alwaysRuleText(for: session))
         }
