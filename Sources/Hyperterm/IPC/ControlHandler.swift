@@ -181,6 +181,9 @@ struct ControlHandler {
         case .sumi:
             guard callerSumi != nil else { reply(.failure("only Sumi keeps the board and its memory")); return }
             handleSumi(request, reply: reply)
+        case .history where request.text == "list" && request.pattern?.isEmpty == false:
+            guard callerSumi != nil else { reply(.failure("only Sumi reopens past sessions")); return }
+            searchHistory(request, reply: reply)
         case .wait:
             waitFor(request, reply: reply)
         case .changes:

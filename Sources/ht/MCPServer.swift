@@ -281,10 +281,11 @@ private let sumiToolDefinitions: [[String: Any]] = toolDefinitions.filter {
     ],
     [
         "name": "session_history",
-        "description": "List recently closed agent sessions, newest first: label, kind, folder, when started and closed, how it ended, its summary, task and last events, and whether reopening resumes its conversation. Open terminals are in list_terminals instead.",
+        "description": "List recently closed agent sessions, newest first: label, kind, folder, when started and closed, how it ended, its summary, task and last events, and whether reopening resumes its conversation. With query, find past sessions by what they did (\"the one looking at the SSD\"): it searches closed sessions' labels, folders, summaries, tasks and transcripts, then Claude conversations Tako never ran, newest first, with a snippet each. Use it instead of grepping ~/.claude/projects. Open terminals are in list_terminals instead.",
         "inputSchema": [
             "type": "object",
             "properties": [
+                "query": ["type": "string", "description": "Words every match must contain, e.g. \"ssd backup\""],
                 "folder": ["type": "string", "description": "Only sessions in this folder or below, absolute or ~/…"],
                 "limit": ["type": "integer", "description": "How many to list (default 15)"],
             ],
@@ -572,6 +573,7 @@ private func callTool(_ name: String, _ given: [String: Any], sessionID: String?
         req.text = "list"
         req.cwd = (arguments["folder"] as? String).map { ($0 as NSString).expandingTildeInPath }
         req.lines = arguments["limit"] as? Int
+        req.pattern = (arguments["query"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
     case "reopen_session" where (arguments["conversation"] as? String)?.isEmpty == false:
         req = ControlRequest(cmd: .history)
         req.text = "resume"
