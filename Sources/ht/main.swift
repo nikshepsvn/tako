@@ -27,6 +27,7 @@ usage: ht <command>
   hook <source> [payload]          forward an agent hook event (used by agents)
   heavy -- <command…>              wait for a heavy-job slot (builds, tests), then run the command
   doctor                           Tako's health: a day of hooks, messages and gc, memory, helpers, channels
+  sumi                             start Sumi if it isn't running
   link [status|on|off|name <n>|pair <peer>|confirm|cancel|unpair <peer>|approve <id> [text]|deny <id>]
                                    Tako Link: friends' Takos on this network (status prints JSON)
 """
@@ -236,6 +237,9 @@ case "browser":
 
 case "doctor":
     print(requireOK(request(.doctor) { $0.from = callerSession }).text ?? "")
+
+case "sumi":
+    print(requireOK(request(.sumi) { $0.text = "start" }).text ?? "ok")
 
 case "link":
     let action = args.first ?? "status"

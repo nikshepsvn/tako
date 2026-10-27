@@ -178,6 +178,10 @@ struct ControlHandler {
             create(request, reply: reply)
         case .act:
             actForSumi(request, reply: reply)
+        case .sumi where isUser && request.text == "start":
+            // `ht sumi`: the same as clicking Sumi's button, for scripts (scripts/link-smoke.sh).
+            store.startSumi()
+            reply(.success(text: store.sumi.map { "Sumi is \($0.isExitedProcess ? "restarting" : "running")" } ?? "starting Sumi"))
         case .sumi:
             guard callerSumi != nil else { reply(.failure("only Sumi keeps the board and its memory")); return }
             handleSumi(request, reply: reply)
