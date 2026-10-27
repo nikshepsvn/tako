@@ -174,4 +174,23 @@ final class InspectorPerformanceTests: XCTestCase {
         XCTAssertNil(glyph.animation(forKey: BrailleSpinner.SpinnerView.animationKey))
         XCTAssertNotNil(glyph.contents, "Reduce Motion still shows one glyph")
     }
+
+    /// Descriptors Tako opened without close-on-exec (as Chromium does) must not reach a shell.
+    func testDescriptorsAreMarkedCloseOnExecBeforeATerminalSpawns() throws {
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("tako-fd-\(UUID().uuidString)").path
+        let file = open(path, O_CREAT | O_RDWR, 0o600)
+        XCTAssertGreaterThan(file, STDERR_FILENO)
+        var pair: [Int32] = [0, 0]
+        XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, &pair), 0)
+        defer {
+            ([file] + pair).forEach { close($0) }
+            unlink(path)
+        }
+        for fd in [file] + pair { XCTAssertEqual(fcntl(fd, F_GETFD) & FD_CLOEXEC, 0) }
+
+        XCTAssertGreaterThanOrEqual(InheritedDescriptors.closeOnExec(), 3)
+        for fd in [file] + pair { XCTAssertNotEqual(fcntl(fd, F_GETFD) & FD_CLOEXEC, 0) }
+        XCTAssertEqual(fcntl(STDIN_FILENO, F_GETFD) & FD_CLOEXEC, 0, "stdio is left alone")
+        XCTAssertEqual(InheritedDescriptors.closeOnExec(), 0, "A second pass finds nothing to change")
+    }
 }

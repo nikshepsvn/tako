@@ -102,6 +102,8 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
         let cValues = keys.map { strdup(launch.environment[$0] ?? "") }
         defer { (cKeys + cValues).forEach { free($0) } }
         var envVars = zip(cKeys, cValues).map { ghostty_env_var_s(key: $0, value: $1) }
+        // The shell is forked from Tako; only its terminal should go with it.
+        InheritedDescriptors.closeOnExec()
 
         surface = launch.workingDirectory.withCString { cwd in
             config.working_directory = cwd
