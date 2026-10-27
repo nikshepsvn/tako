@@ -8,6 +8,9 @@ LOG="$HOME/tako-install.log"
 HT="$HOME/.hyperterm/bin/ht"
 [ -x "$HT" ] || HT="$HOME/.tako/bin/ht"
 MAX_WAIT=${MAX_WAIT:-21600}
+# Labels whose subagent count is ignored (their state still counts): a session whose count is
+# stuck above zero after its helpers finished would otherwise hold the install forever.
+IGNORE_SUBAGENTS=${IGNORE_SUBAGENTS:-}
 JOB=${JOB_LABEL:-}
 
 log() { echo "$(date '+%H:%M:%S') $*" >> "$LOG"; }
@@ -15,8 +18,9 @@ finish() { [ -n "$JOB" ] && launchctl remove "$JOB" 2>/dev/null; exit 0; }
 
 # Prints the agents that are still busy, one per line; nothing when all are idle.
 busy() {
-  "$HT" ls --json 2>/dev/null | /usr/bin/python3 -c '
-import json, sys
+  "$HT" ls --json 2>/dev/null | IGNORE="$IGNORE_SUBAGENTS" /usr/bin/python3 -c '
+import json, os, sys
+ignore = set(os.environ.get("IGNORE", "").split())
 try:
     sessions = json.load(sys.stdin)
 except Exception:
@@ -24,8 +28,9 @@ except Exception:
 for s in sessions:
     if s.get("kind") not in ("claude", "codex"):
         continue
-    if s.get("state") != "idle" or s.get("subagents", 0):
-        print("@%s %s%s" % (s.get("label"), s.get("state"), " +subagents" if s.get("subagents", 0) else ""))
+    helpers = 0 if s.get("label") in ignore else s.get("subagents", 0)
+    if s.get("state") != "idle" or helpers:
+        print("@%s %s%s" % (s.get("label"), s.get("state"), " +subagents" if helpers else ""))
 '
 }
 
