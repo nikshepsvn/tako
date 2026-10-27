@@ -319,6 +319,11 @@ Every agent started in Tako gets a `hyperterm` MCP server (it keeps its original
 | `rename_terminal` | Rename itself as the work changes (`@auth-refactor` → `@fix-login`); old names keep working |
 | `start_server` / `restart_server` | Run dev servers in their own labeled terminals. Starting one asks you first |
 | `start_agent` | Delegate a self-contained subtask to a new Claude or Codex agent in its own worktree. Asks you first; the new agent inherits the parent's account and permission choices and messages it back when done |
+| `wait_for` | Block until another agent finishes its turn, waits on you or exits, or until a server prints a matching line, instead of polling |
+| `agent_changes` | Another agent's branch, commits since its base, changed files and optionally the patch, to review or build on its work |
+| `team_board` | A per-repository board shared across worktrees: signed notes for decisions and API contracts (kept in `.git/tako-board.json`), and file claims. A claim on a path someone else holds is refused and the holder is asked to release it; claims show in `list_terminals` and end when the agent exits |
+| `server_logs` | A server's output filtered by regex or to errors (with stack traces), and from a cursor so each read returns only new lines |
+| `notify_user` | A macOS notification mid-turn, for something you should see now (rate-limited per agent) |
 
 Sumi gets these plus its own: `arrange_view`, `save_layout` / `restore_layout`, `detach_terminals`, `watch_terminal`, `session_history`, `reopen_session`, `handle_waiting` / `stop_handling` / `answer_prompt`, `choose_option`, `trust_folder`, `sign_in`, `interrupt_agent`, `phone_mode`, `machine_status`, `set_policy`, and `close_terminal` (you confirm each close, outside Phone Mode).
 
