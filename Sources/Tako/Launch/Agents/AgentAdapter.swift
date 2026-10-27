@@ -4,7 +4,7 @@ import Foundation
 /// to Tako, where it keeps conversations and accounts, and how its screen reads. One
 /// implementation per CLI; call sites ask `kind.adapter` instead of switching on the kind.
 protocol AgentAdapter: Sendable {
-    /// The command typed to run it, its wrapper's name in ~/.hyperterm/bin, and its process name.
+    /// The command typed to run it, its wrapper's name in ~/.tako/bin, and its process name.
     var command: String { get }
 
     // MARK: Launch
@@ -86,7 +86,7 @@ extension SessionKind {
 }
 
 extension AgentAdapter {
-    /// Its wrapper in ~/.hyperterm/bin, shell-quoted.
+    /// Its wrapper in ~/.tako/bin, shell-quoted.
     var wrapper: String { shellQuote(AgentIntegration.binDirectory.appendingPathComponent(command).path) }
 
     /// An npm install runs `node <script>`: the package's own file, or its bin link named for the command.

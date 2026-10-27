@@ -3,7 +3,7 @@
 # Chromium launches renderers, GPU and utility processes from. Run as an Xcode post-build phase.
 #
 # The CEF distribution (~130 MB download, ~400 MB extracted) is cached once per version in
-# ~/Library/Caches/Hyperterm/cef and copied into each build only when it changed.
+# ~/Library/Caches/Tako/cef and copied into each build only when it changed.
 # Ported from CefSwift's AppBundler/FrameworkLayout (MIT).
 set -eu
 
@@ -12,7 +12,7 @@ CEF_SHA1="2e9df1077c097e450d30f26804b7c4b1820da4e3"
 CEF_NAME="cef_binary_${CEF_VERSION}_macosarm64_minimal"
 FRAMEWORK_NAME="Chromium Embedded Framework"
 
-CACHE="$HOME/Library/Caches/Hyperterm/cef"
+CACHE="$HOME/Library/Caches/Tako/cef"
 DIST="$CACHE/$CEF_NAME"
 SOURCE_FRAMEWORK="$DIST/Release/$FRAMEWORK_NAME.framework"
 

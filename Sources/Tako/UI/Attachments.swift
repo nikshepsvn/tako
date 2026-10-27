@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 /// Files and images dropped onto a message field become paths in the message, which Claude Code
 /// and Codex read as attachments. Images without a file (dragged from a browser, pasted) are
-/// saved to ~/.hyperterm/attachments first.
+/// saved to ~/.tako/attachments first.
 enum Attachments {
     static var directory: URL { ControlPaths.supportDirectory.appendingPathComponent("attachments") }
 

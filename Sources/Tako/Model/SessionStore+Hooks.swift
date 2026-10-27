@@ -336,7 +336,7 @@ extension SessionStore {
     }
 }
 
-/// Recent hook payloads in ~/.hyperterm/hooks.log, for diagnosing status detection. Capped.
+/// Recent hook payloads in ~/.tako/hooks.log, for diagnosing status detection. Capped.
 /// Hooks fire on every tool call, so all formatting and I/O happens on a background queue
 /// with one long-lived file handle.
 enum HookLog {

@@ -148,7 +148,7 @@ extension StewardRules {
     /// `script` is what a node process runs (its argv[1]).
     static func isAgentMachinery(name: String?, path: String?, script: String? = nil) -> Bool {
         guard let name else { return true }
-        if ["ht", "caffeinate", "login", "zsh", "bash", "sh", "fish"].contains(name) { return true }
+        if ["ht", "tako", "caffeinate", "login", "zsh", "bash", "sh", "fish"].contains(name) { return true }
         return SessionKind.agentAdapters.contains { $0.isCLIProcess(name: name, path: path, script: script) }
     }
 }

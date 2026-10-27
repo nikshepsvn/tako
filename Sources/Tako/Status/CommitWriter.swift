@@ -59,7 +59,7 @@ enum CommitWriter {
     /// Runs the first available CLI through a login shell so the user's PATH applies, with
     /// Tako's own wrappers taken off PATH so no hooks or MCP servers attach.
     private static func run(prompt: String, input: String, at path: String) -> String? {
-        let strip = #"PATH=$(printf '%s' "$PATH" | tr ':' '\n' | grep -v '/.hyperterm/bin$' | paste -sd: -); export PATH;"#
+        let strip = #"PATH=$(printf '%s' "$PATH" | tr ':' '\n' | grep -vE '/\.(tako|hyperterm)/bin$' | paste -sd: -); export PATH;"#
         let quotedPrompt = "'" + prompt.replacingOccurrences(of: "'", with: "'\\''") + "'"
         let script = """
         \(strip)

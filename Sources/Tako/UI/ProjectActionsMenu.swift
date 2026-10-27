@@ -35,7 +35,7 @@ final class ProjectActionsMenu: NSObject, NSMenuDelegate {
             menu.addItem(item)
         }
         menu.addItem(.separator())
-        let help = NSMenuItem(title: "Add actions in .hyperterm.json", action: nil, keyEquivalent: "")
+        let help = NSMenuItem(title: "Add actions in .tako.json", action: nil, keyEquivalent: "")
         help.isEnabled = false
         menu.addItem(help)
     }

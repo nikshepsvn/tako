@@ -1,7 +1,7 @@
 import Foundation
 
 /// A one-click command for a project: run the tests, start Storybook, lint. Declared in
-/// `.hyperterm.json` under "actions", or detected from the project's own manifests when none
+/// `.tako.json` under "actions", or detected from the project's own manifests when none
 /// are declared.
 struct ProjectAction: Codable, Equatable, Identifiable {
     var name: String

@@ -11,7 +11,7 @@ struct WorktreeRecord: Codable, Equatable {
     let created: Date
 }
 
-/// Every agent worktree Tako made and hasn't seen removed yet, in ~/.hyperterm.
+/// Every agent worktree Tako made and hasn't seen removed yet, in ~/.tako.
 enum WorktreeLedger {
     static var url: URL { ControlPaths.supportDirectory.appendingPathComponent("worktree-ledger.json") }
 
@@ -164,9 +164,11 @@ enum WorktreeJanitor {
         return Array(result.dropFirst())
     }
 
-    /// Folders Tako makes worktrees in: Claude's in the repository, Codex's in ~/.hyperterm.
-    static func isAgentWorktree(_ path: String, support: String = ControlPaths.supportDirectory.path) -> Bool {
-        path.contains("/.claude/worktrees/") || path.hasPrefix(support + "/worktrees/")
+    /// Folders Tako makes worktrees in: Claude's in the repository, Codex's in ~/.tako. Ones made
+    /// before the rename are recorded (and known to git) by their ~/.hyperterm path.
+    static func isAgentWorktree(_ path: String, support: String = ControlPaths.supportDirectory.path,
+                                legacySupport: String = ControlPaths.legacySupportDirectory.path) -> Bool {
+        path.contains("/.claude/worktrees/") || path.hasPrefix(support + "/worktrees/") || path.hasPrefix(legacySupport + "/worktrees/")
     }
 
     // MARK: - Collecting

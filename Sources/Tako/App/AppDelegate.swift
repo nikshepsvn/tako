@@ -492,12 +492,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func installCLI(_ sender: Any?) {
         let alert = NSAlert()
         alert.messageText = "Use ht from any terminal"
-        alert.informativeText = "Add this line to your ~/.zshrc:\n\nexport PATH=\"$HOME/.hyperterm/bin:$PATH\"\n\nThen run `ht ls` to list terminals or `ht send @api \"…\"` to message one. The Claude and Codex wrappers in that folder add Tako's hooks automatically."
+        alert.informativeText = "Add this line to your ~/.zshrc:\n\nexport PATH=\"$HOME/.tako/bin:$PATH\"\n\nThen run `ht ls` to list terminals or `ht send @api \"…\"` to message one. The Claude and Codex wrappers in that folder add Tako's hooks automatically."
         alert.addButton(withTitle: "Copy Line")
         alert.addButton(withTitle: "Done")
         if alert.runModal() == .alertFirstButtonReturn {
             NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString("export PATH=\"$HOME/.hyperterm/bin:$PATH\"", forType: .string)
+            NSPasteboard.general.setString("export PATH=\"$HOME/.tako/bin:$PATH\"", forType: .string)
         }
     }
 }

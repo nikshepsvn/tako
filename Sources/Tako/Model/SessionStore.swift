@@ -328,7 +328,7 @@ final class SessionStore: ObservableObject {
         sessions.filter { $0.kind == .browser && $0.spec.owner == agent.id }
     }
 
-    /// Dev servers Tako started for an agent's workspace (`.hyperterm.json` "dev"). They serve
+    /// Dev servers Tako started for an agent's workspace (`.tako.json` "dev"). They serve
     /// that worktree only, so they close with the agent.
     func servers(ownedBy agent: TerminalSession) -> [TerminalSession] {
         sessions.filter { $0.kind == .server && $0.spec.owner == agent.id }
@@ -446,7 +446,7 @@ final class SessionStore: ObservableObject {
         return session
     }
 
-    /// A project's `.hyperterm.json` "dev" command runs next to each new agent workspace, on the
+    /// A project's `.tako.json` "dev" command runs next to each new agent workspace, on the
     /// agent's own port.
     private func startDevServerIfConfigured(for agent: TerminalSession, config: ProjectConfig?) {
         guard agent.kind.isAgent, agent.spec.worktreeBranch != nil || agent.spec.worktreeName != nil,

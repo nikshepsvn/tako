@@ -7,7 +7,7 @@ import Observation
 /// browser session opening, or an agent's first browser tool call), never at app launch.
 ///
 /// Agents drive browsers through `chrome-devtools-mcp` attached to Chromium's DevTools port,
-/// which listens on loopback only. One profile in ~/.hyperterm/browser holds every browser's
+/// which listens on loopback only. One profile in ~/.tako/browser holds every browser's
 /// logins, separate from the user's own Chrome.
 @MainActor @Observable
 final class AgentBrowser {

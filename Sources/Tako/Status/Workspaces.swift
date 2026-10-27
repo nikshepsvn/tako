@@ -1,6 +1,7 @@
 import Foundation
 
-/// Per-project settings in `.hyperterm.json` at the repository root:
+/// Per-project settings in `.tako.json` at the repository root (`.hyperterm.json`, its name
+/// before the rename, is still read when there is no `.tako.json`):
 /// `{"setup": "pnpm i", "dev": "pnpm dev --port $PORT", "ports": [4100, 4199]}`.
 struct ProjectConfig: Decodable {
     var setup: String?
@@ -12,13 +13,18 @@ struct ProjectConfig: Decodable {
     static func load(for path: String) -> ProjectConfig? {
         guard let root = GitInspector.query(path).map({ mainRoot(of: $0) }) ?? Optional(path) else { return nil }
         for dir in [path, root] {
-            let url = URL(fileURLWithPath: dir).appendingPathComponent(".hyperterm.json")
-            if let data = try? Data(contentsOf: url), let config = try? JSONDecoder().decode(ProjectConfig.self, from: data) {
-                return config
+            for name in fileNames {
+                let url = URL(fileURLWithPath: dir).appendingPathComponent(name)
+                if let data = try? Data(contentsOf: url), let config = try? JSONDecoder().decode(ProjectConfig.self, from: data) {
+                    return config
+                }
             }
         }
         return nil
     }
+
+    /// In the order they're read.
+    static let fileNames = [".tako.json", ".hyperterm.json"]
 
     private static func mainRoot(of info: GitInfo) -> String {
         info.isWorktree ? (runGit(["-C", info.root, "rev-parse", "--path-format=absolute", "--git-common-dir"]).map { ($0 as NSString).deletingLastPathComponent } ?? info.root) : info.root
@@ -50,7 +56,7 @@ enum Ports {
 enum Workspaces {
     /// Claude gets its native `--worktree` (Claude Code then blocks writes back into the main
     /// checkout and copies `.worktreeinclude` files itself). Codex gets a git worktree under
-    /// ~/.hyperterm/worktrees; the store clones the same `.worktreeinclude` files in after launch.
+    /// ~/.tako/worktrees; the store clones the same `.worktreeinclude` files in after launch.
     static func prepare(spec: LaunchSpec) -> Result<LaunchSpec, WorktreeError> {
         guard let info = GitInspector.query(expandTilde(spec.cwd)) else { return .failure(.notARepo(spec.cwd)) }
         var spec = spec

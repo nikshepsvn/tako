@@ -16,15 +16,17 @@ final class InstalledAgents: ObservableObject {
         Task {
             let path = await Task.detached(priority: .userInitiated) { Self.loginPATH() }.value
             kinds = Self.installed(SessionStore.sumiChoices, path: path ?? ProcessInfo.processInfo.environment["PATH"] ?? "",
-                                   skipping: AgentIntegration.binDirectory.path)
+                                   skipping: AgentIntegration.binDirectory.path,
+                                   ControlPaths.legacySupportDirectory.appendingPathComponent("bin").path)
         }
     }
 
     /// Agents whose command (their raw value) is an executable in a folder on `path`.
-    nonisolated static func installed(_ kinds: [SessionKind], path: String, skipping skipped: String,
+    nonisolated static func installed(_ kinds: [SessionKind], path: String, skipping skipped: String...,
                                       isExecutable: (String) -> Bool = FileManager.default.isExecutableFile(atPath:)) -> Set<SessionKind> {
-        let skipped = (skipped as NSString).standardizingPath
-        let folders = path.split(separator: ":").map { (String($0) as NSString).standardizingPath }.filter { $0 != skipped }
+        // Both bin folders: users' PATH lines may still name ~/.hyperterm/bin, a link to ours.
+        let skipped = Set(skipped.map { ($0 as NSString).standardizingPath })
+        let folders = path.split(separator: ":").map { (String($0) as NSString).standardizingPath }.filter { !skipped.contains($0) }
         return Set(kinds.filter { kind in folders.contains { isExecutable(($0 as NSString).appendingPathComponent(kind.rawValue)) } })
     }
 

@@ -82,7 +82,7 @@ final class NamingTests: XCTestCase {
         let folder = try temporaryProject()
         defer { try? FileManager.default.removeItem(at: folder) }
         let json = "{\"dev\":\"npm run dev -- --port $PORT\",\"setup\":\"npm install\",\"ports\":[4200,4299]}"
-        try Data(json.utf8).write(to: folder.appendingPathComponent(".hyperterm.json"))
+        try Data(json.utf8).write(to: folder.appendingPathComponent(".tako.json"))
         let spec = LaunchSpec(label: "fixture", kind: .claude, cwd: folder.path)
 
         let result = await SessionLaunchPreparation.prepare(spec, isolateIfPossible: true)

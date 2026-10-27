@@ -172,14 +172,38 @@ struct ControlResponse: Codable {
 }
 
 enum ControlPaths {
-    /// ~/.hyperterm: short and space-free because these paths are typed into shells and
-    /// embedded in agent configs. $HT_HOME moves it, so a dev build (scripts/run.sh) keeps its
-    /// sessions, socket and browser profile apart from the installed app's.
+    static let directoryName = ".tako"
+    /// The folder's name before the rename to Tako. The app moves it to ~/.tako at launch and
+    /// leaves a symlink here for good: PATH lines, git worktree metadata, saved sessions and
+    /// agent configs all hold absolute ~/.hyperterm paths.
+    static let legacyDirectoryName = ".hyperterm"
+
+    /// ~/.tako: short and space-free because these paths are typed into shells and embedded in
+    /// agent configs. $HT_HOME moves it, so a dev build (scripts/run.sh) keeps its sessions,
+    /// socket and browser profile apart from the installed app's.
     static var supportDirectory: URL {
-        if let env = ProcessInfo.processInfo.environment["HT_HOME"], !env.isEmpty {
+        resolveSupportDirectory(home: FileManager.default.homeDirectoryForCurrentUser,
+                                environment: ProcessInfo.processInfo.environment)
+    }
+
+    /// The pre-rename folder in the user's home, whether it is still a folder or now a symlink.
+    static var legacySupportDirectory: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(legacyDirectoryName, isDirectory: true)
+    }
+
+    /// Shared by the app and `ht`, so both find the same folder before and after the app's move:
+    /// a real ~/.hyperterm with no ~/.tako is an install the new app hasn't launched on yet.
+    static func resolveSupportDirectory(home: URL, environment: [String: String]) -> URL {
+        if let env = environment["HT_HOME"], !env.isEmpty {
             return URL(fileURLWithPath: env, isDirectory: true)
         }
-        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".hyperterm", isDirectory: true)
+        let current = home.appendingPathComponent(directoryName, isDirectory: true)
+        let legacy = home.appendingPathComponent(legacyDirectoryName, isDirectory: true)
+        let fm = FileManager.default
+        if fm.fileExists(atPath: current.path) { return current }
+        let isSymlink = (try? fm.attributesOfItem(atPath: legacy.path)[.type] as? FileAttributeType) == .typeSymbolicLink
+        if !isSymlink, fm.fileExists(atPath: legacy.path) { return legacy }
+        return current
     }
 
     /// $HT_SOCKET wins so sessions always talk to the app instance that spawned them.

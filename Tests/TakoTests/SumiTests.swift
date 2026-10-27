@@ -411,9 +411,9 @@ final class SumiTests: XCTestCase {
     }
 
     func testInstalledCLIsComeFromThePATHWithoutKuronamisWrappers() {
-        let executables: Set<String> = ["/Users/me/.hyperterm/bin/claude", "/Users/me/.hyperterm/bin/codex", "/opt/homebrew/bin/codex"]
-        let installed = InstalledAgents.installed([.claude, .codex], path: "/Users/me/.hyperterm/bin/:/usr/bin:/opt/homebrew/bin",
-                                                  skipping: "/Users/me/.hyperterm/bin", isExecutable: executables.contains)
+        let executables: Set<String> = ["/Users/me/.tako/bin/claude", "/Users/me/.tako/bin/codex", "/opt/homebrew/bin/codex"]
+        let installed = InstalledAgents.installed([.claude, .codex], path: "/Users/me/.tako/bin/:/usr/bin:/opt/homebrew/bin",
+                                                  skipping: "/Users/me/.tako/bin", isExecutable: executables.contains)
         XCTAssertEqual(installed, [.codex])
         XCTAssertEqual(InstalledAgents.installed([.claude, .codex], path: "", skipping: "/x", isExecutable: { _ in true }), [])
     }

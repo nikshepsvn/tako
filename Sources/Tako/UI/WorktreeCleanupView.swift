@@ -27,7 +27,7 @@ enum WorktreeScanner {
                     if line.hasPrefix("branch refs/heads/") { branch = String(line.dropFirst(18)) }
                 }
                 guard let path, path != root,
-                      path.contains("/.hyperterm/worktrees/") || path.contains("/.claude/worktrees/") else { continue }
+                      WorktreeJanitor.isAgentWorktree(path) else { continue }
                 let dirty = !(runGit(["-C", path, "status", "--porcelain"]) ?? "").isEmpty
                 entries.append(WorktreeEntry(path: path, branch: branch, repoRoot: root, merged: merged.contains(branch),
                                              dirty: dirty, inUse: inUse.contains(path)))

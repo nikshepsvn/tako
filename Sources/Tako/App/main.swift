@@ -16,6 +16,9 @@ private func scrubInheritedSessionEnvironment() {
 }
 
 scrubInheritedSessionEnvironment()
+// First, before anything resolves ControlPaths.supportDirectory (the store, the socket, the
+// hand-off check), so every path this launch uses is the moved one.
+DataDirectoryMigration.runAtLaunch()
 
 MainActor.assumeIsolated {
     // Chromium (the browser pane) needs NSApp to be its NSApplication subclass from the first

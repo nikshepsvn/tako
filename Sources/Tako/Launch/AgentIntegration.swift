@@ -3,13 +3,24 @@ import Foundation
 
 /// Generates the files that wire Claude Code and Codex into Tako without touching the user's
 /// own config: hooks and MCP are passed per launch (`claude --settings/--mcp-config`,
-/// `codex -c ...`) through small wrapper scripts in ~/.hyperterm/bin.
+/// `codex -c ...`) through small wrapper scripts in ~/.tako/bin.
 enum AgentIntegration {
     static var root: URL { ControlPaths.supportDirectory }
     static var binDirectory: URL { root.appendingPathComponent("bin") }
     static var htPath: String { binDirectory.appendingPathComponent("ht").path }
     /// The hook listener's port this launch; nil sends every Claude hook through `ht hook`.
     nonisolated(unsafe) static var hookPort: UInt16?
+
+    /// The start of every wrapper: HT_DIR resolved the way `ControlPaths.supportDirectory` does
+    /// it, and every Tako bin folder taken off PATH so the real CLI runs, not this wrapper again.
+    /// The old ~/.hyperterm/bin counts too: users' PATH lines still name it, and after the move
+    /// it is a symlink to this same folder.
+    static let wrapperPrelude = #"""
+    HT_DIR="${HT_HOME:-$HOME/.tako}"
+    [ -z "$HT_HOME" ] && [ ! -d "$HT_DIR" ] && [ -d "$HOME/.hyperterm" ] && [ ! -L "$HOME/.hyperterm" ] && HT_DIR="$HOME/.hyperterm"
+    PATH=$(printf '%s' "$PATH" | tr ':' '\n' | grep -vx -e "$HT_DIR/bin" -e "$HOME/.tako/bin" -e "$HOME/.hyperterm/bin" | paste -sd: -)
+    export PATH
+    """#
 
     /// Idempotent; run at every launch because the app bundle (and its `ht`) can move.
     static func install() {
@@ -24,6 +35,10 @@ enum AgentIntegration {
               FileManager.default.fileExists(atPath: bundled) else { return }
         try? FileManager.default.removeItem(atPath: htPath)
         try? FileManager.default.createSymbolicLink(atPath: htPath, withDestinationPath: bundled)
+        // `tako` runs the same CLI, for users who reach for the product's name.
+        let tako = binDirectory.appendingPathComponent("tako").path
+        try? FileManager.default.removeItem(atPath: tako)
+        try? FileManager.default.createSymbolicLink(atPath: tako, withDestinationPath: "ht")
     }
 
     // MARK: - Launch
@@ -96,7 +111,7 @@ func expandTilde(_ path: String) -> String {
     (path as NSString).expandingTildeInPath
 }
 
-/// "~/Code/hyperterm" stays; deeper paths keep the last two components: "…/app/web".
+/// "~/Code/tako" stays; deeper paths keep the last two components: "…/app/web".
 func shortPath(_ path: String) -> String {
     let abbreviated = abbreviateHome(path)
     let parts = abbreviated.split(separator: "/")
