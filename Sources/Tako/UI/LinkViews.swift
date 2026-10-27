@@ -103,7 +103,7 @@ struct LinkPairingCard: View {
             Text(title).font(Typeface.headline).foregroundStyle(Tone.text)
             if let code = pairing.code {
                 Text(LinkPairingCode.display(code))
-                    .font(.system(size: 28, weight: .semibold, design: .monospaced))
+                    .font(Typeface.codeDisplay)
                     .foregroundStyle(Tone.text)
                     .accessibilityLabel("Code \(code.map(String.init).joined(separator: " "))")
             }

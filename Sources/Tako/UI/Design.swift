@@ -32,6 +32,8 @@ enum Typeface {
     /// Code, commands, paths, diffs.
     static let code = Font.system(size: 12, design: .monospaced)
     static let codeSmall = Font.system(size: 11, design: .monospaced)
+    /// A short code two people read aloud and compare, like Tako Link's pairing code.
+    static let codeDisplay = Font.system(size: 28, weight: .semibold, design: .monospaced)
 
     static let codeNS = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
 }
