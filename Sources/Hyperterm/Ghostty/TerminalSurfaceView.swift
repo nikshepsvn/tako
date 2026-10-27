@@ -134,7 +134,21 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
         SecureInput.removeScoped(ObjectIdentifier(self))
         guard let surface else { return }
         self.surface = nil
-        ghostty_surface_free(surface)
+        Self.releaseLater(surface, keeping: self) { ghostty_surface_free($0) }
+    }
+
+    /// Frees on the next main-queue turn, never inside the call that asked. A close can start
+    /// from inside libghostty: a Cmd-W binding runs during `ghostty_surface_key`, and a child-exit
+    /// action during `ghostty_app_tick` can restart or close the session. Freeing the surface
+    /// there tore down its IO loop while libghostty was still using it, which is when libxev logs
+    /// "invalid state in submission queue". By the time this runs the surface is already
+    /// unregistered and `surface` is nil, so nothing else reaches it; the view is kept alive
+    /// until then because the renderer draws into its layer.
+    static func releaseLater<Handle>(_ handle: Handle, keeping view: NSView, free: @escaping (Handle) -> Void) {
+        nonisolated(unsafe) let handle = handle
+        DispatchQueue.main.async {
+            withExtendedLifetime(view) { free(handle) }
+        }
     }
 
     func handleCloseRequest(processAlive: Bool) {

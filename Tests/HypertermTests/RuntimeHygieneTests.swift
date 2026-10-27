@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import Hyperterm
 
@@ -216,5 +217,19 @@ final class RuntimeHygieneTests: XCTestCase {
         let spec = LaunchSpec(label: "gone", kind: .claude, cwd: "/repo/.claude/worktrees/gone")
         let text = SessionStore.describeHistory([spec], folderExists: { _ in false })
         XCTAssertTrue(text.contains("folder missing"), text)
+    }
+
+    // MARK: - Terminal surface teardown
+
+    @MainActor
+    func testSurfaceIsFreedAfterTheCallThatClosedIt() {
+        var freed: [Int] = []
+        let view = NSView()
+        TerminalSurfaceView.releaseLater(7, keeping: view) { freed.append($0) }
+        XCTAssertEqual(freed, [], "never inside the libghostty call that asked to close")
+        let done = expectation(description: "freed on the next main-queue turn")
+        DispatchQueue.main.async { done.fulfill() }
+        wait(for: [done], timeout: 2)
+        XCTAssertEqual(freed, [7])
     }
 }
