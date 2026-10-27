@@ -32,7 +32,7 @@ struct ControlHandler {
         return session
     }
 
-    private var callerSumi: TerminalSession? {
+    var callerSumi: TerminalSession? {
         guard let agent = callerAgent, agent.isSumi else { return nil }
         return agent
     }
@@ -181,6 +181,11 @@ struct ControlHandler {
         case .sumi:
             guard callerSumi != nil else { reply(.failure("only Sumi keeps the board and its memory")); return }
             handleSumi(request, reply: reply)
+        case .history where request.text == "list" && request.pattern?.isEmpty == false:
+            guard callerSumi != nil else { reply(.failure("only Sumi reopens past sessions")); return }
+            searchHistory(request, reply: reply)
+        case .orphans:
+            orphans(request, reply: reply)
         case .wait:
             waitFor(request, reply: reply)
         case .changes:
@@ -292,7 +297,7 @@ struct ControlHandler {
             guard let target = callerSession ?? (isUser ? resolve(request.target) : nil) else { return notFound(request.target) }
             store.sessionWantsAttention(target, title: "@\(target.label)", body: sanitizeMessage(request.text ?? ""))
             return .success()
-        case .permission, .subscribe, .browser, .heavy, .act, .sumi, .wait, .changes:
+        case .permission, .subscribe, .browser, .heavy, .act, .sumi, .wait, .changes, .orphans:
             return .success()
         }
     }
@@ -304,7 +309,11 @@ struct ControlHandler {
 
     func notFound(_ target: String?) -> ControlResponse {
         let known = store.sessions.map { "@" + $0.label }.joined(separator: ", ")
-        return .failure("no terminal named \(target ?? "(none)"). Known: \(known.isEmpty ? "none" : known)")
+        let listed = "Known: \(known.isEmpty ? "none" : known)"
+        guard let target, !target.trimmingCharacters(in: .whitespaces).isEmpty else {
+            return .failure("say which terminal: pass terminal, e.g. \"@api\". \(listed)")
+        }
+        return .failure("no terminal named \(target). \(listed)")
     }
 
     // MARK: - Commands
@@ -457,31 +466,78 @@ struct ControlHandler {
             reply(.failure("count must be 1–\(sumiStartCap)"))
             return
         }
+        let path = expandTilde(folder)
+        let launch = { [self] (autoTrust: Bool) in
+            launchForSumi(request, kind: kind, task: task, folder: path, count: count, autoTrust: autoTrust, reply: reply)
+        }
+        // A folder the CLI doesn't trust stops every agent at its trust prompt before any hook
+        // runs: ask the user once for the folder, however many start calls name it, then let
+        // Tako answer each agent's prompt.
+        let trusted = FolderTrust.isTrusted(path, kind: kind, account: AccountStore.shared.preferredID(for: kind)) ?? true
+        if trusted { return launch(false) }
+        if store.startupGate.isApproved(path) { return launch(true) }
+        let place = abbreviateHome(path)
+        if request.userApproved == true {
+            if let refusal = store.userRequestRefusal(true) { return reply(.failure(refusal.description)) }
+            store.startupGate.approve(path)
+            return launch(true)
+        }
+        if store.isPhoneModeOn {
+            return reply(.failure("\(kind.displayName) hasn't been told to trust \(place) yet, so the agent would stop at its "
+                + "trust prompt. Ask the user whether to trust it; if they say yes, call start_agent again with user_approved true"))
+        }
+        let store = self.store
+        store.startupGate.whenAnswered(path, ask: { done in
+            store.confirm("Trust \(place) for Sumi's agents?",
+                          "Sumi is starting \(kind.displayName) agents in \(place), a folder \(kind.displayName) hasn't been told to trust. "
+                          + "Trusting lets them read, edit and run files there; Tako answers each agent's trust prompt for you.",
+                          completion: done)
+        }) { approved in
+            approved ? launch(true) : reply(.failure("the user didn't trust \(place), so nothing was started"))
+        }
+    }
+
+    /// Starts the agents, then waits (bounded, `request.wait` seconds) until each reaches its
+    /// prompt, stops on a screen, or exits, so Sumi hears "exited" now instead of finding the
+    /// terminal gone later.
+    private func launchForSumi(_ request: ControlRequest, kind: SessionKind, task: String, folder: String, count: Int,
+                               autoTrust: Bool, reply: @escaping ControlServer.Reply) {
         let base = normalizeLabel(request.label ?? "")
         let isolate = request.worktree ?? true
         let store = self.store
+        let waitSeconds = min(max(request.wait ?? SessionStore.startWaitDefault, 0), SessionStore.startWaitMax)
         // One queued launch per agent: each takes its own steward reservation, so the cap holds
         // for a batch. When anything is held back Sumi hears so right away.
         let batch = LaunchBatch()
         for index in 1...count {
             Steward.shared.enqueueLaunch { Task { @MainActor in
                 var spec = LaunchSpec(label: base.isEmpty || count == 1 ? base : "\(base)-\(index)",
-                                      kind: kind, cwd: expandTilde(folder))
+                                      kind: kind, cwd: folder)
                 if spec.labelSource == .user { spec.labelSource = .agent }
                 spec.options = AppSettings.defaultMode.map { AgentOptions(mode: $0) }
                 let child = await store.launch(spec, select: false, isolateIfPossible: isolate, task: task)
+                if autoTrust { store.startupGate.trustOnStart(child.id) }
                 child.record(.note, "Started by Sumi")
                 batch.started[index] = child
                 // The user asked for them, so each shows as soon as it's up: one is selected, several
                 // starting together land side by side like a project window opened for them.
                 store.showOpenedBySumi([child])
                 guard batch.started.count == count, !batch.replied else { return }
+                batch.replied = true
                 let ordered = batch.started.sorted { $0.key < $1.key }.map(\.value)
                 let labels = ordered.map { "@" + $0.label }.joined(separator: ", ")
-                var response = ControlResponse.success(text: "started \(labels) in \(abbreviateHome(expandTilde(folder)))"
-                    + store.projectBrief(for: folder))
-                response.session = ordered.first?.info()
-                reply(response)
+                let head = "started \(labels) in \(abbreviateHome(folder))"
+                let brief = store.projectBrief(for: folder)
+                @MainActor func send(_ text: String, ok: Bool) {
+                    var response = ok ? ControlResponse.success(text: text) : ControlResponse.failure(text)
+                    response.session = ordered.first?.info()
+                    reply(response)
+                }
+                guard waitSeconds > 0 else { return send(head + brief, ok: true) }
+                store.awaitStartup(ordered, timeout: TimeInterval(waitSeconds)) { lines in
+                    let allExited = lines.allSatisfy { $0.contains(": exited: ") }
+                    send(head + "\n" + lines.joined(separator: "\n") + brief, ok: !allExited)
+                }
             } }
         }
         // The launch tasks run after this returns, so `replied` is set before any can read it.
@@ -745,78 +801,107 @@ struct ControlHandler {
     }
 
     /// Sumi's hands on an agent: pick a question's option, trust its folder, sign it in, or stop
-    /// its turn. Only Sumi, and only where the store allows (Phone Mode or a handed-over session).
+    /// its turn. Only Sumi, and only where the store allows (Phone Mode, a handed-over session,
+    /// or what the user just asked for). Restart, interrupt and choose also take several
+    /// terminals or a pattern (`targets`), each answered on its own line.
     private func actForSumi(_ request: ControlRequest, reply: @escaping ControlServer.Reply) {
         guard callerSumi != nil else { reply(.failure("only Sumi acts on agents")); return }
+        if request.targets?.isEmpty == false { actOnMany(request, reply: reply); return }
         guard let target = resolve(request.target) else { reply(notFound(request.target)); return }
-        func send(_ result: Result<String, DelegationError>) {
+        actForSumi(on: target, request) { result in
             switch result {
             case .success(let text): reply(.success(text: text))
             case .failure(let error): reply(.failure(error.description))
             }
         }
+    }
+
+    func actForSumi(on target: TerminalSession, _ request: ControlRequest,
+                    completion send: @escaping (Result<String, DelegationError>) -> Void) {
         let userApproved = request.userApproved == true
+        let userRequested = request.userRequested == true
         switch request.text {
         case "choose":
             let options = request.options ?? request.count.map { [$0] } ?? []
-            store.chooseForSumi(target, options: options, userApproved: userApproved, completion: send)
+            store.chooseForSumi(target, options: options, userApproved: userApproved, userRequested: userRequested, completion: send)
         case "trust":
             send(store.trustForSumi(target, userApproved: userApproved))
         case "signin":
             store.signInForSumi(target, completion: send)
         case "interrupt":
-            store.interruptForSumi(target, hard: request.hard == true, completion: send)
+            store.interruptForSumi(target, hard: request.hard == true, userRequested: userRequested, completion: send)
         case "keys":
             store.pressKeysForSumi(target, keys: request.keys ?? [], userApproved: userApproved, completion: send)
         case "type":
             store.typeForSumi(target, text: request.label ?? "", submit: request.submit ?? true, userApproved: userApproved, completion: send)
         case "restart":
-            send(store.restartForSumi(target))
+            send(store.restartForSumi(target, userRequested: userRequested))
         case "mode":
             guard let mode = request.mode.flatMap(PermissionMode.init(rawValue:)) else {
-                reply(.failure("mode must be one of: " + PermissionMode.allCases.map(\.rawValue).joined(separator: ", ")))
+                send(.failure(DelegationError("mode must be one of: " + PermissionMode.allCases.map(\.rawValue).joined(separator: ", "))))
                 return
             }
             store.setModeForSumi(target, mode: mode, userApproved: userApproved, completion: send)
         default:
-            reply(.failure("act must be choose, trust, signin, interrupt, keys, type, restart or mode"))
+            send(.failure(DelegationError("act must be choose, trust, signin, interrupt, keys, type, restart or mode")))
         }
     }
 
-    /// Closing ends a process and whatever it hadn't saved, so the user confirms each one.
+    /// Closing ends a process and whatever it hadn't saved. The user confirms each close in Tako,
+    /// unless they asked Sumi for it directly (`userRequested`). Either way, work that exists
+    /// nowhere else keeps the terminal open, unless the user also said to close it anyway (`force`).
     private func closeForSumi(_ request: ControlRequest, reply: @escaping ControlServer.Reply) {
+        if request.targets?.isEmpty == false { closeMany(request, reply: reply); return }
         guard let target = resolve(request.target) else { reply(notFound(request.target)); return }
-        guard !target.isSumi else { reply(.failure("Sumi can't close itself")); return }
-        // Work that isn't merged or committed is never closed from here: the user decides on the agent itself.
+        closeForSumi(target, request) { result in
+            switch result {
+            case .success(let text): reply(.success(text: text))
+            case .failure(let error): reply(.failure(error.description))
+            }
+        }
+    }
+
+    func closeForSumi(_ target: TerminalSession, _ request: ControlRequest,
+                      completion: @escaping (Result<String, DelegationError>) -> Void) {
+        guard !target.isSumi else { return completion(.failure(DelegationError("Sumi can't close itself"))) }
+        let userRequested = request.userRequested == true
+        if let refusal = store.userRequestRefusal(userRequested) { return completion(.failure(refusal)) }
+        let force = userRequested && request.force == true
         let spec = target.spec
-        guard spec.isWorktree else { confirmClose(target, reply: reply); return }
+        let close = { [self] in
+            if userRequested { closeNow(target, completion: completion) } else { confirmClose(target, completion: completion) }
+        }
+        guard spec.isWorktree else { return close() }
         DispatchQueue.global(qos: .userInitiated).async {
             let risk = WorkAtRisk.evaluate(at: spec.workPath, base: spec.baseBranch)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    if let risk, !risk.isEmpty {
-                        reply(.failure("@\(target.label) left open: \(risk.headline(base: spec.baseBranch)). Tell the user; they close it from the agent itself."))
-                    } else {
-                        self.confirmClose(target, reply: reply)
-                    }
+                    guard let risk, !risk.isEmpty, !force else { return close() }
+                    completion(.failure(DelegationError("@\(target.label) left open: \(risk.headline(base: spec.baseBranch)). "
+                        + "Tell the user; if they say to close it anyway, call again with user_requested and force true")))
                 }
             }
         }
     }
 
-    private func confirmClose(_ target: TerminalSession, reply: @escaping ControlServer.Reply) {
+    private func closeNow(_ target: TerminalSession, completion: @escaping (Result<String, DelegationError>) -> Void) {
+        guard store.sessions.contains(where: { $0.id == target.id }) else {
+            return completion(.success("@\(target.label) was already closed"))
+        }
+        target.record(.note, "Closed by Sumi at the user's request")
+        store.close(target)
+        completion(.success("closed @\(target.label)"))
+    }
+
+    private func confirmClose(_ target: TerminalSession, completion: @escaping (Result<String, DelegationError>) -> Void) {
         store.confirmUnlessPhoneMode("Sumi wants to close @\(target.label)", abbreviateHome(target.spec.workPath)) { [store] approved in
-            guard approved else {
-                reply(.failure("the user kept @\(target.label) open"))
-                return
-            }
+            guard approved else { return completion(.failure(DelegationError("the user kept @\(target.label) open"))) }
             // It may have been closed while the sheet was up.
             guard store.sessions.contains(where: { $0.id == target.id }) else {
-                reply(.success(text: "@\(target.label) was already closed"))
-                return
+                return completion(.success("@\(target.label) was already closed"))
             }
             store.close(target)
-            reply(.success(text: "closed @\(target.label)"))
+            completion(.success("closed @\(target.label)"))
         }
     }
 
@@ -944,7 +1029,9 @@ struct ControlHandler {
     /// Agents rename only themselves, never over a name the user chose, and never onto a label
     /// someone else answers to.
     private func rename(_ request: ControlRequest) -> ControlResponse {
-        guard let label = request.label, !normalizeLabel(label).isEmpty else { return .failure("label is empty") }
+        guard let label = request.label, !normalizeLabel(label).isEmpty else {
+            return .failure("pass label: the new short kebab-case name, e.g. \"auth-refactor\"")
+        }
         if let me = callerAgent {
             if let target = request.target, !target.isEmpty, resolve(target)?.id != me.id {
                 return .failure("agents can only rename their own terminal")

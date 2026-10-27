@@ -103,6 +103,9 @@ final class TerminalSession: ObservableObject, Identifiable {
     /// The agent's whole closing message for its last turn (Stop's last_assistant_message);
     /// `summary` holds only its first line. Cleared when a turn starts.
     var lastReply: String?
+    /// The current turn began with the user's own prompt: not another agent's message, not a
+    /// Tako event digest, not a channel event. Sumi's `user_requested` counts only in such a turn.
+    var turnFromUser = true
     /// Its CLI's prompt and stop hooks report turns (a Codex with hooks on), so turns aren't
     /// guessed from work starting.
     var reportsTurnsByHook = false
@@ -438,7 +441,7 @@ final class TerminalSession: ObservableObject, Identifiable {
     /// (while starting, or in the first two minutes) and while the prompt is up.
     func checkTrustPrompt() {
         guard kind.isAgent, !isAsleep else { return }
-        if kind == .claude, Date().timeIntervalSince(createdAt) < 120, answerStartupScreen() { return }
+        if kind == .claude, Date().timeIntervalSince(startupScreensSince) < 120, answerStartupScreen() { return }
         let mayShow = lastHookAt == .distantPast && (state == .starting || Date().timeIntervalSince(createdAt) < 120)
         guard showingTrustPrompt || mayShow else { return }
         let screen = surface.readViewport()
@@ -458,7 +461,9 @@ final class TerminalSession: ObservableObject, Identifiable {
             }
         } else {
             if pendingQuestion?.selectsByNumber == true { pendingQuestion = nil }
-            trustPromptSeen(PromptScreen.hasTrustDialog(screen))
+            let trust = PromptScreen.hasTrustDialog(screen)
+            trustPromptSeen(trust)
+            if trust, showingTrustPrompt { store?.trustPromptShown(self) }
         }
     }
 
@@ -472,6 +477,11 @@ final class TerminalSession: ObservableObject, Identifiable {
     }
 
     private var startupScreenAnsweredAt = Date.distantPast
+    /// When startup screens may still come: launch, or the trust prompt's answer, since Claude
+    /// shows the development channel warning only after trust. Left 18 minutes on the trust
+    /// prompt, an agent used to be past the window and stuck on the warning instead.
+    private var startupScreensSince: Date { max(createdAt, trustAnsweredAt) }
+    private var trustAnsweredAt = Date.distantPast
 
     /// Screens Claude shows at startup because of how Tako launched it, answered the way the
     /// launch already decided; left up, they block sessions started from the phone. They can come
@@ -512,6 +522,7 @@ final class TerminalSession: ObservableObject, Identifiable {
         if onScreen, state != .needsInput(reason), !state.needsAttention || showingTrustPrompt {
             apply(.processStarted, source: "trust prompt", force: .needsInput(reason))
         } else if !onScreen, showingTrustPrompt {
+            trustAnsweredAt = Date()
             // SessionStart may have come while it showed (and kept "needs you"); otherwise the
             // normal start flow takes it from here.
             apply(.processStarted, source: "trust answered", force: lastHookAt == .distantPast ? .starting : .idle)

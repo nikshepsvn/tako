@@ -297,21 +297,24 @@ extension SessionStore {
 
     /// Sumi acts on a session the user handed it, or on any agent while Phone Mode is on: there the
     /// user is talking to Sumi from their phone, so what Sumi relays is the user's word.
-    private func sumiMayAct(on session: TerminalSession) -> DelegationError? {
+    /// `userRequested`: the user directly asked for this, in the turn Sumi is in (see
+    /// SessionStore+UserRequested for what Tako checks).
+    private func sumiMayAct(on session: TerminalSession, userRequested: Bool = false) -> DelegationError? {
         guard session.kind.isAgent, !session.isSumi else { return DelegationError("@\(session.label) isn't an agent") }
-        guard isPhoneModeOn || session.delegation != nil else {
-            return DelegationError("@\(session.label) isn't handed to you; outside Phone Mode, take over a session's waits with handle_waiting only when the user asks")
+        guard isPhoneModeOn || session.delegation != nil || userRequested else {
+            return DelegationError("@\(session.label) isn't handed to you. If the user just asked for this, call again with "
+                + "user_requested true; otherwise take over its waits with handle_waiting only when the user asks")
         }
-        return nil
+        return userRequestRefusal(userRequested && !isPhoneModeOn && session.delegation == nil)
     }
 
     /// choose_option: picks option `number` (1-based) of the question the agent is asking. A
     /// question the hook described is answered through it; any other numbered menu on screen
     /// (permission menus, plan approval, /model, forms) gets the keys a person would press.
     /// Several numbers answer a form one question at a time.
-    func chooseForSumi(_ session: TerminalSession, options numbers: [Int], userApproved: Bool = false,
+    func chooseForSumi(_ session: TerminalSession, options numbers: [Int], userApproved: Bool = false, userRequested: Bool = false,
                        completion: @escaping (Result<String, DelegationError>) -> Void) {
-        if let refusal = sumiMayAct(on: session) { return completion(.failure(refusal)) }
+        if let refusal = sumiMayAct(on: session, userRequested: userRequested) { return completion(.failure(refusal)) }
         guard let first = numbers.first else { return completion(.failure(DelegationError("option is required"))) }
         if numbers.count == 1, let question = session.pendingQuestion, question.mode == .options, question.items.count == 1 {
             let options = question.items[0].options
@@ -381,9 +384,9 @@ extension SessionStore {
 
     /// interrupt_agent: Esc, as a person presses to stop a turn or back out of a dialog; `hard` is
     /// Ctrl-C, for a command that ignores Esc. Once only: twice in a row quits Claude.
-    func interruptForSumi(_ session: TerminalSession, hard: Bool,
+    func interruptForSumi(_ session: TerminalSession, hard: Bool, userRequested: Bool = false,
                           completion: @escaping (Result<String, DelegationError>) -> Void) {
-        if let refusal = sumiMayAct(on: session) { return completion(.failure(refusal)) }
+        if let refusal = sumiMayAct(on: session, userRequested: userRequested) { return completion(.failure(refusal)) }
         guard !session.isAsleep else { return completion(.failure(DelegationError("@\(session.label) is asleep; nothing to stop"))) }
         if case .exited = session.state { return completion(.failure(DelegationError("@\(session.label) has exited; restart_agent it"))) }
         pressAsUser(session, [hard ? "ctrl-c" : "esc"]) { after in
@@ -438,8 +441,8 @@ extension SessionStore {
     }
 
     /// restart_agent: quits and relaunches the agent on the same conversation.
-    func restartForSumi(_ session: TerminalSession) -> Result<String, DelegationError> {
-        if let refusal = sumiMayAct(on: session) { return .failure(refusal) }
+    func restartForSumi(_ session: TerminalSession, userRequested: Bool = false) -> Result<String, DelegationError> {
+        if let refusal = sumiMayAct(on: session, userRequested: userRequested) { return .failure(refusal) }
         session.restart()
         session.record(.note, "Restarted by Sumi")
         return .success("restarting @\(session.label) on the same conversation")

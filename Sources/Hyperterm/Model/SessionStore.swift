@@ -31,6 +31,8 @@ final class SessionStore: ObservableObject {
     /// Terminals Sumi waits on, each with the note it left for when that one finishes.
     var sumiWatches: [UUID: String] = [:]
     var sumiDigest = SumiDigest()
+    /// Folder trust for Sumi's agents, asked once per folder (SessionStore+Startup).
+    let startupGate = StartupGate()
     /// Sumi's plan, memory and learned approvals (SumiBrain), on disk beside the sessions.
     lazy var sumiBrain = SumiBrain(directory: persists ? ControlPaths.supportDirectory : nil)
     var sumiDigestRetryScheduled = false
@@ -149,6 +151,8 @@ final class SessionStore: ObservableObject {
         if case .exited = session.state { return false }
         guard Self.channelsEnabled, session.kind == .claude, !session.isAsleep, session.state != .starting,
               let seen = channelLastSeen[session.id], Date().timeIntervalSince(seen) < 60 else { return false }
+        // At rest, a channel event starts a turn of its own with no prompt hook to say whose it is.
+        if session.isSumi, session.state != .working { session.turnFromUser = false }
         if let waiter = channelWaiters.removeValue(forKey: session.id) {
             var response = ControlResponse.success()
             response.messages = [text]
