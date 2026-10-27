@@ -14,15 +14,20 @@ final class GhosttyRuntime {
 
     private(set) var app: ghostty_app_t?
     private(set) var config: ghostty_config_t?
+    private var initialized = false
 
     private init() {}
 
     /// Must run before any surface is created.
     func start() -> Bool {
         configureResourcesDirectory()
-        guard ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv) == GHOSTTY_SUCCESS else {
-            NSLog("tako: ghostty_init failed")
-            return false
+        if !initialized {
+            guard ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv) == GHOSTTY_SUCCESS else {
+                NSLog("tako: ghostty_init failed")
+                return false
+            }
+            initialized = true
+            observeAppFocus()
         }
         guard let config = makeConfig() else { return false }
 
@@ -44,8 +49,16 @@ final class GhosttyRuntime {
         self.app = app
         self.config = config
         ghostty_app_set_focus(app, NSApp.isActive)
-        observeAppFocus()
         return true
+    }
+
+    /// Frees the engine once every surface is freed. Tests that need a real terminal start it
+    /// and stop it again, so the rest of the suite still runs no shells.
+    func stop() {
+        if let app { ghostty_app_free(app) }
+        if let config { ghostty_config_free(config) }
+        app = nil
+        config = nil
     }
 
     func tick() {

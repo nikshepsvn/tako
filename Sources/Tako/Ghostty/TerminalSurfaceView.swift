@@ -108,6 +108,7 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
         var envVars = zip(cKeys, cValues).map { ghostty_env_var_s(key: $0, value: $1) }
         // The shell is forked from Tako; only its terminal should go with it.
         InheritedDescriptors.closeOnExec()
+        let ptysBefore = SurfacePtys.willCreate()
 
         surface = launch.workingDirectory.withCString { cwd in
             config.working_directory = cwd
@@ -123,11 +124,13 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
                 }
             }
         }
-        if surface == nil { NSLog("tako: ghostty_surface_new failed") }
+        if surface == nil { NSLog("tako: ghostty_surface_new failed") } else { SurfacePtys.didCreate(self, before: ptysBefore) }
     }
 
-    /// Frees the surface, which terminates its process.
-    func destroy() {
+    /// Ends the terminal's processes and then frees the surface, off this call.
+    func destroy() { destroy(onFreed: nil) }
+
+    func destroy(onFreed: (@MainActor () -> Void)?) {
         LiveSurfaces.unregister(self)
         if let windowOcclusionObserver {
             NotificationCenter.default.removeObserver(windowOcclusionObserver)
@@ -138,10 +141,14 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
         displayObservers.forEach { $0.center.removeObserver($0.token) }
         displayObservers = []
         SecureInput.removeScoped(ObjectIdentifier(self))
-        guard let surface else { return }
+        guard let surface else { onFreed?(); return }
         self.surface = nil
         thawFrame()
-        Self.releaseLater(surface, keeping: self) { ghostty_surface_free($0) }
+        let pty = SurfacePtys.take(for: self)
+        Self.releaseLater(surface, keeping: self, pty: pty, onFreed: onFreed) { surface in
+            ghostty_surface_free(surface)
+            if let pty { MainActor.assumeIsolated { SurfacePtys.didFree(pty) } }
+        }
     }
 
     /// The renderer's last frame stays in the layer as an IOSurface (megabytes at tile size) for as
@@ -152,20 +159,47 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
         layer?.sublayers?.forEach { $0.contents = nil; $0.removeFromSuperlayer() }
     }
 
-    /// Frees on the next main-queue turn, never inside the call that asked. A close can start
-    /// from inside libghostty: a Cmd-W binding runs during `ghostty_surface_key`, and a child-exit
-    /// action during `ghostty_app_tick` can restart or close the session. Freeing the surface
-    /// there tore down its IO loop while libghostty was still using it, which is when libxev logs
-    /// "invalid state in submission queue". By the time this runs the surface is already
-    /// unregistered and `surface` is nil, so nothing else reaches it; the view is kept alive
-    /// until then because the renderer draws into its layer.
-    static func releaseLater<Handle>(_ handle: Handle, keeping view: NSView, free: @escaping (Handle) -> Void) {
+    /// Frees once the terminal's processes have ended (`SessionReaper.endTerminal`) and the
+    /// reader has taken in their last output, on a later main-queue turn, never inside the call
+    /// that asked.
+    ///
+    /// `ghostty_surface_free` joins the surface's IO thread, which hangs up the child `login`,
+    /// loops until it has exited, then joins the reader. A `login` on its way out first waits
+    /// for the terminal's output to drain, and the reader blocks once the IO thread's or the
+    /// app's mailbox is full: neither empties while the IO thread is in teardown and the main
+    /// thread is joined. A program flooding the terminal with queries or titles froze the app
+    /// for good that way. Ending the processes first, while both threads still run, leaves the
+    /// free nothing to wait for. With no known pty (it never opened) the free goes ahead on the
+    /// next turn.
+    ///
+    /// A close can also start from inside libghostty: a Cmd-W binding runs during
+    /// `ghostty_surface_key`, and a child-exit action during `ghostty_app_tick` can restart or
+    /// close the session. Freeing the surface there tore down its IO loop while libghostty was
+    /// still using it ("invalid state in submission queue" from libxev). By the time this runs
+    /// the surface is already unregistered and `surface` is nil, so nothing else reaches it; the
+    /// view is kept alive until then because the renderer draws into its layer.
+    static func releaseLater<Handle>(_ handle: Handle, keeping view: NSView, pty: PtyMaster? = nil,
+                                     onFreed: (@MainActor () -> Void)? = nil, free: @escaping (Handle) -> Void) {
         nonisolated(unsafe) let handle = handle
-        DispatchQueue.main.async {
-            withExtendedLifetime(view) {
-                free(handle)
-                MainActor.assumeIsolated { (view as? TerminalSurfaceView)?.dropLastFrame() }
+        nonisolated(unsafe) let view = view
+        nonisolated(unsafe) let free = free
+        nonisolated(unsafe) let onFreed = onFreed
+        let release: @Sendable () -> Void = {
+            DispatchQueue.main.async {
+                withExtendedLifetime(view) {
+                    FreeWatchdog.guarding { free(handle) }
+                    MainActor.assumeIsolated {
+                        (view as? TerminalSurfaceView)?.dropLastFrame()
+                        onFreed?()
+                    }
+                }
             }
+        }
+        guard let pty else { release(); return }
+        SessionReaper.endTerminal(tty: pty.tty) {
+            // The master stays open until the free, so this is still the surface's.
+            pty.waitForHangup()
+            release()
         }
     }
 

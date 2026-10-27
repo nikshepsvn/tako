@@ -60,7 +60,7 @@ enum Doctor {
         let day = events.filter { snapshot.now.timeIntervalSince($0.date) <= window }
         var lines = ["Tako doctor · up \(SessionStore.duration(snapshot.uptime)) · \(size(snapshot.footprint))",
                      "Last 24 h (events.jsonl):"]
-        lines += [hooks(day), messages(day), notifications(day, now: snapshot.notifications), launches(day), gc(day)]
+        lines += [hooks(day), messages(day), notifications(day, now: snapshot.notifications), launches(day), teardown(day), gc(day)]
         lines.append("Now:")
         lines += [footprint(snapshot, day), agents(snapshot), helpers(snapshot), browser(snapshot),
                   worktrees(snapshot), channels(snapshot.channels)]
@@ -113,6 +113,24 @@ enum Doctor {
         guard swept > 0 else { return line(true, "\(launches); no leftover processes to sweep") }
         return line(false, "\(launches); leftovers stopped per launch: " + perLaunch.map(String.init).joined(separator: ", ")
             + " (the run before didn't clean up)")
+    }
+
+    /// Closing a terminal must never hold the app: a free that stalled the main thread, or a
+    /// terminal that had to be killed before it could be freed.
+    private static func teardown(_ events: [LoggedEvent]) -> String {
+        let teardown = events.filter { $0.kind == "teardown" }
+        let stalled = teardown.filter { $0.fields["stalled"] != nil }
+        let killed = teardown.filter { $0.fields["stalled"] == nil && $0.fields["stalled_for"] == nil }.count
+        guard !teardown.isEmpty else { return line(true, "terminal closes: none stalled") }
+        var text = "terminal closes: "
+        if stalled.isEmpty {
+            text += "none stalled"
+        } else {
+            let longest = teardown.compactMap { $0.double("stalled_for") }.max()
+            text += "\(stalled.count) stalled the app" + (longest.map { String(format: " (longest %.1f s)", $0) } ?? " (still stuck when logged)")
+        }
+        if killed > 0 { text += ", \(killed) killed after ignoring their hangup" }
+        return line(stalled.isEmpty, text)
     }
 
     private static func gc(_ events: [LoggedEvent]) -> String {

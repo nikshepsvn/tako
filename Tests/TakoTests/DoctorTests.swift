@@ -44,6 +44,7 @@ final class DoctorTests: XCTestCase {
         XCTAssertFalse(report.contains("\n! "), report)
         XCTAssertTrue(report.contains("✓ notifications: 13 sent, 49 suppressed"), "the hourly lines plus the hour so far: \(report)")
         XCTAssertTrue(report.contains("✓ launches: 1; no leftover processes"), report)
+        XCTAssertTrue(report.contains("✓ terminal closes: none stalled"), report)
         XCTAssertTrue(report.contains("✓ footprint 700 MB (24 h: 600 MB → 700 MB"), report)
         XCTAssertTrue(report.contains("✓ agents: 2 live (1 claude, 1 codex), 1 asleep"), report)
         XCTAssertTrue(report.contains("✓ MCP helpers: 1–3 per agent, 4 in all"), report)
@@ -77,6 +78,9 @@ final class DoctorTests: XCTestCase {
             event("message", "m4 dropped", ["outcome": "dropped"], hoursAgo: 1),
             event("message", "c9 not confirmed", ["outcome": "not confirmed"], hoursAgo: 1),
             event("gc", "skipped worktrees: couldn't list processes' folders", hoursAgo: 1),
+            event("teardown", "freeing a terminal has held the main thread for 3 s", ["stalled": true], hoursAgo: 1),
+            event("teardown", "freeing a terminal held the main thread for 4.2 s", ["stalled_for": 4.2], hoursAgo: 1),
+            event("teardown", "killed a terminal's login 2 s after its hangup", hoursAgo: 1),
             event("footprint", "passed 1536 MB", ["footprint": 1600 << 20, "breakdown": ["tags_mb": ["MALLOC_SMALL": 600]]], hoursAgo: 0.5),
         ]
         let report = Doctor.report(snapshot, events: events)
@@ -84,6 +88,7 @@ final class DoctorTests: XCTestCase {
         XCTAssertTrue(report.contains("! messages: 0 delivered from a queue or channel, 1 dropped (@web), 1 channel pushes not confirmed"), report)
         XCTAssertTrue(report.contains("! launches: 2; leftovers stopped per launch: 2, 0"), report)
         XCTAssertTrue(report.contains("! gc: 1 action, 1 not done"), report)
+        XCTAssertTrue(report.contains("! terminal closes: 1 stalled the app (longest 4.2 s), 1 killed after ignoring their hangup"), report)
         XCTAssertTrue(report.contains("! footprint \(Doctor.size(1800 << 20)) (24 h: 900 MB → "), report)
         XCTAssertTrue(report.contains("), growing; breakdown in events.jsonl"), report)
         XCTAssertTrue(report.contains("! agents: 0 live; CRASH-LOOPING: @web"), report)
