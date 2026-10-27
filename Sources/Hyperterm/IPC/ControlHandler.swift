@@ -630,6 +630,10 @@ struct ControlHandler {
         if status.browserProcesses > 0 {
             lines.append("Browsers (Tako's Chromium, all tiles) · \(gb(status.browserBytes)) in \(status.browserProcesses) processes; hidden idle pages close on their own")
         }
+        if status.takoBytes > 0 {
+            let high = status.takoBytes >= TakoFootprint.warnBytes ? " · high: restart Tako when nothing is mid-task" : ""
+            lines.append("Tako itself · \(gb(status.takoBytes))\(high)")
+        }
         return lines.joined(separator: "\n")
     }
 
