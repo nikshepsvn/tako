@@ -71,6 +71,7 @@ final class GhosttyRuntime {
         loadBundledConfig(config, named: "tako-style")
         ghostty_config_load_default_files(config)
         ghostty_config_load_recursive_files(config)
+        if let cap = ScrollbackCap.overrideFile() { ghostty_config_load_file(config, cap.path) }
         loadBundledConfig(config, named: "tako-defaults")
         ghostty_config_finalize(config)
         logDiagnostics(config)
@@ -116,6 +117,46 @@ final class GhosttyRuntime {
                 SecureInput.apply(active: false)
             }
         }
+    }
+}
+
+/// A ceiling on the user's own `scrollback-limit`. A value sized for one standalone Ghostty window
+/// (say 100 MB) is held by every terminal Tako runs, and an agent's output fills it within hours:
+/// two dozen long-lived agents reached gigabytes. A lower value of theirs still wins.
+enum ScrollbackCap {
+    /// Ghostty's own default, per terminal.
+    static let maxBytes: UInt64 = 10_000_000
+
+    /// The limit to impose over `configText` (the user's files, in load order), or nil when theirs
+    /// is within the cap or unset (Tako's own 3 MB then applies).
+    static func cappedLimit(configText: String) -> UInt64? {
+        let values = configText.split(whereSeparator: \.isNewline).compactMap { line -> UInt64? in
+            let parts = line.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+            guard parts.count == 2, parts[0] == "scrollback-limit" else { return nil }
+            return UInt64(parts[1].replacingOccurrences(of: "_", with: ""))
+        }
+        guard let last = values.last, last > maxBytes else { return nil }
+        return maxBytes
+    }
+
+    /// The files Ghostty loads by default on macOS, in its order (later ones win).
+    static func userConfigFiles(environment: [String: String] = ProcessInfo.processInfo.environment,
+                                home: URL = FileManager.default.homeDirectoryForCurrentUser) -> [URL] {
+        let xdg = environment["XDG_CONFIG_HOME"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+            ?? home.appendingPathComponent(".config")
+        let support = home.appendingPathComponent("Library/Application Support/com.mitchellh.ghostty")
+        return [xdg.appendingPathComponent("ghostty/config"), xdg.appendingPathComponent("ghostty/config.ghostty"),
+                support.appendingPathComponent("config"), support.appendingPathComponent("config.ghostty")]
+    }
+
+    /// A one-line config setting the cap, when the user's files go over it.
+    static func overrideFile() -> URL? {
+        let text = userConfigFiles().compactMap { try? String(contentsOf: $0, encoding: .utf8) }.joined(separator: "\n")
+        guard let limit = cappedLimit(configText: text) else { return nil }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("tako-scrollback-cap.conf")
+        guard (try? "scrollback-limit = \(limit)\n".write(to: url, atomically: true, encoding: .utf8)) != nil else { return nil }
+        NSLog("tako: scrollback-limit capped at %llu bytes per terminal", limit)
+        return url
     }
 }
 

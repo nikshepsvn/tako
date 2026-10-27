@@ -140,7 +140,16 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
         SecureInput.removeScoped(ObjectIdentifier(self))
         guard let surface else { return }
         self.surface = nil
+        thawFrame()
         Self.releaseLater(surface, keeping: self) { ghostty_surface_free($0) }
+    }
+
+    /// The renderer's last frame stays in the layer as an IOSurface (megabytes at tile size) for as
+    /// long as the view lives, and SwiftUI and AppKit can hold a closed session's view well past
+    /// its close. Nothing draws into it once the surface is freed.
+    func dropLastFrame() {
+        layer?.contents = nil
+        layer?.sublayers?.forEach { $0.contents = nil; $0.removeFromSuperlayer() }
     }
 
     /// Frees on the next main-queue turn, never inside the call that asked. A close can start
@@ -153,7 +162,10 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     static func releaseLater<Handle>(_ handle: Handle, keeping view: NSView, free: @escaping (Handle) -> Void) {
         nonisolated(unsafe) let handle = handle
         DispatchQueue.main.async {
-            withExtendedLifetime(view) { free(handle) }
+            withExtendedLifetime(view) {
+                free(handle)
+                MainActor.assumeIsolated { (view as? TerminalSurfaceView)?.dropLastFrame() }
+            }
         }
     }
 
