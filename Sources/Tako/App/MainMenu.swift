@@ -112,6 +112,7 @@ enum MainMenu {
         menu.addItem(item("Grid", #selector(AppDelegate.layoutGrid(_:)), "3", [.command, .option], target: target))
         menu.addItem(item("Zoom Terminal", #selector(AppDelegate.toggleZoom(_:)), "\r", target: target))
         menu.addItem(item("Even Out Tiles", #selector(AppDelegate.evenOutTiles(_:)), "0", [.command, .option], target: target))
+        menu.addItem(moveTileMenu(target))
         menu.addItem(.separator())
         menu.addItem(item("Bigger", #selector(TerminalSurfaceView.increaseFontSize(_:)), "+"))
         menu.addItem(item("Smaller", #selector(TerminalSurfaceView.decreaseFontSize(_:)), "-"))
@@ -119,6 +120,24 @@ enum MainMenu {
         menu.addItem(.separator())
         menu.addItem(item("Clear Screen", #selector(TerminalSurfaceView.clearScreen(_:)), "k"))
         return menu
+    }
+
+    /// ⌃⌥ + arrow sends the focused tile to that side of the canvas as a full column or row.
+    /// Free in macOS (⌃ + arrow is Spaces, fn⌃ + arrow is window tiling) and in Ghostty's
+    /// defaults; a user's own Ghostty keybind still wins inside a terminal.
+    private static func moveTileMenu(_ target: AppDelegate) -> NSMenuItem {
+        let menu = NSMenu(title: "Move Tile")
+        let arrows: [LayoutEdge: Int] = [.left: NSLeftArrowFunctionKey, .right: NSRightArrowFunctionKey,
+                                         .top: NSUpArrowFunctionKey, .bottom: NSDownArrowFunctionKey]
+        for (index, edge) in LayoutEdge.allCases.enumerated() {
+            let key = arrows[edge].flatMap(UnicodeScalar.init).map { String(Character($0)) } ?? ""
+            let entry = item("To \(edge.rawValue.capitalized) Edge", #selector(AppDelegate.moveTile(_:)), key, [.control, .option], target: target)
+            entry.tag = index
+            menu.addItem(entry)
+        }
+        let holder = NSMenuItem(title: "Move Tile", action: nil, keyEquivalent: "")
+        holder.submenu = menu
+        return holder
     }
 
     private static func goMenu(_ target: AppDelegate) -> NSMenu {

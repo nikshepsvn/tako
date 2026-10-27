@@ -445,6 +445,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func layoutGrid(_ sender: Any?) { store.setLayout(.grid) }
     @objc func toggleZoom(_ sender: Any?) { store.toggleZoom(store.selectedID) }
     @objc func evenOutTiles(_ sender: Any?) { windowController?.evenOutTiles() }
+    /// View › Move Tile: the menu item's tag is the edge's index in `LayoutEdge.allCases`.
+    @objc func moveTile(_ sender: Any?) {
+        guard let tag = (sender as? NSMenuItem)?.tag, LayoutEdge.allCases.indices.contains(tag) else { return }
+        windowController?.moveFocusedTile(to: LayoutEdge.allCases[tag])
+    }
     @objc func quickAsk(_ sender: Any?) { windowController?.toggleQuickAsk() }
 
     private func updateQuickAskHotKey() {
