@@ -887,13 +887,17 @@ private struct SidebarFooter: View {
             Hairline()
             WindowControls(store: store, actions: actions)
                 .padding(.horizontal, Space.m)
-            // Both meters stack when Claude and Codex are both in use; each is labeled then.
-            VStack(alignment: .leading, spacing: Space.s) {
-                let both = store.rateLimits != nil && store.codexRateLimits != nil
-                if let limits = store.rateLimits { UsageMeter(limits: limits, label: both ? "Claude" : nil) }
-                if let limits = store.codexRateLimits { UsageMeter(limits: limits, label: both || store.rateLimits == nil ? "Codex" : nil) }
+            // Both meters stack when Claude and Codex are both in use; each is labeled then. The
+            // machine button sits at the row's end, where there's room at any sidebar width.
+            HStack(alignment: .center, spacing: Space.s) {
+                VStack(alignment: .leading, spacing: Space.s) {
+                    let both = store.rateLimits != nil && store.codexRateLimits != nil
+                    if let limits = store.rateLimits { UsageMeter(limits: limits, label: both ? "Claude" : nil) }
+                    if let limits = store.codexRateLimits { UsageMeter(limits: limits, label: both || store.rateLimits == nil ? "Codex" : nil) }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                MachineButton(steward: .shared, store: store)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
             // Sumi's mark floats in this corner (SumiDock), so the row starts past it
             // and is as tall as its button.
             .frame(minHeight: buttonSize)
@@ -927,7 +931,6 @@ private struct WindowControls: View {
             IconButton(symbol: "sidebar.right", help: "Show or hide the inspector (⌥⌘I)", action: actions.toggleInspector)
             if store.phoneModeAvailable || store.isPhoneModeOn { PhoneModeButton(store: store) }
             Spacer(minLength: Space.xs)
-            TakoMemoryChip(steward: .shared)
             let waiting = store.attentionCount
             if waiting > 0 {
                 WaitingBadge(count: waiting, labels: store.waitingSessions.map(\.label), store: store)
@@ -1003,19 +1006,6 @@ private struct QueuedTag: View {
         }
         return (["Not delivered yet. They land when @\(session.label) is free; senders hear when they do."] + lines)
             .joined(separator: "\n")
-    }
-}
-
-/// Tako's own memory, shown in the footer only past the point where a restart is worth it.
-private struct TakoMemoryChip: View {
-    @ObservedObject var steward: Steward
-
-    var body: some View {
-        if steward.takoBytes >= TakoFootprint.warnBytes {
-            Tag(text: "Tako " + ByteCountFormatter.string(fromByteCount: Int64(steward.takoBytes), countStyle: .memory),
-                tint: Palette.attention)
-                .help("Tako itself is using a lot of memory. Restart it when nothing is mid-task; sessions resume. Details in the inspector's Info tab.")
-        }
     }
 }
 

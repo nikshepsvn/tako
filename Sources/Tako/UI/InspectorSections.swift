@@ -104,9 +104,6 @@ struct RememberedApprovalsSection: View {
 struct TakoHealthSection: View {
     @ObservedObject var steward: Steward
     let store: SessionStore
-    @State private var orphans: [OrphanProcess]?
-    @State private var scanning = false
-    @State private var stopping: Set<pid_t> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.s) {
@@ -123,8 +120,25 @@ struct TakoHealthSection: View {
                       ? "Tako itself has grown large. Restart it when nothing is mid-task; sessions resume."
                       : "Tako's own memory, browsers and agents not included")
             }
-            if let orphans {
-                orphanList(orphans)
+            StrayProcessesView(store: store)
+        }
+    }
+}
+
+/// What Tako started whose terminal has closed: found on demand, each with Stop. Shared by the
+/// inspector's Info tab and the machine popover.
+struct StrayProcessesView: View {
+    let store: SessionStore
+    /// Shown found already (snapshots); otherwise nothing is scanned until asked.
+    var initial: [OrphanProcess]? = nil
+    @State private var orphans: [OrphanProcess]?
+    @State private var scanning = false
+    @State private var stopping: Set<pid_t> = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.s) {
+            if let found = orphans ?? initial {
+                orphanList(found)
             } else {
                 ActionRow(symbol: "magnifyingglass", title: scanning ? "Looking…" : "Find Stray Processes") { scan() }
                     .help("Dev servers, browsers and tools Tako started whose terminal has closed")
