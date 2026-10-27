@@ -489,6 +489,8 @@ struct SumiEvent: Equatable {
         case waitingLong(String, minutes: Int)
         /// Tako approved a handled session's request as the user always does in that project.
         case autoApproved(String)
+        /// What became of a message Sumi sent that had to wait in a queue.
+        case messageReceipt(String)
     }
 
     var label: String
@@ -537,6 +539,7 @@ struct SumiEvent: Equatable {
         case .failed(let reason): line += "failed: " + reason
         case .exited: line += "exited"
         case .steward(let warning): line += "steward warning: " + warning
+        case .messageReceipt(let receipt): return receipt
         }
         if let note { line += " (your note: \(note))" }
         return line

@@ -112,8 +112,10 @@ final class TerminalSession: ObservableObject, Identifiable {
 
     private(set) var surface: any SessionSurface
     /// Messages for an agent that is blocked on a prompt or mid-turn; delivered when it is free
-    /// so typed text can't land in a permission dialog or interrupt the turn.
-    @Published private(set) var pendingMessages: [String] = []
+    /// so typed text can't land in a permission dialog or interrupt the turn. Each carries an id
+    /// and its sender, so the sender hears when it lands, or that it never did.
+    @Published private(set) var queue: [QueuedMessage] = []
+    var pendingMessages: [String] { queue.map(\.text) }
     /// The command to type once the shell shows its first prompt.
     private var pendingInput: String?
     /// The shell reported a prompt (OSC 7) and nothing was typed since, so input lands at it.
@@ -198,7 +200,7 @@ final class TerminalSession: ObservableObject, Identifiable {
     func restart() {
         store?.dropAllApprovals(for: self)
         // Typed once the relaunched agent is ready, instead of lost with the old channel.
-        pendingMessages += store?.dropChannel(for: self) ?? []
+        (store?.dropChannel(for: self) ?? []).forEach { enqueue($0, from: nil) }
         endSleep()
         isWaking = false
         resumeAwaitsExit = false
@@ -346,7 +348,7 @@ final class TerminalSession: ObservableObject, Identifiable {
         let chars = event.characters ?? ""
         switch chars {
         case "\r":
-            if !wakeDraft.isEmpty { pendingMessages.append(wakeDraft) }
+            if !wakeDraft.isEmpty { enqueue(wakeDraft, from: nil) }
             wakeDraft = ""
         case "\u{7f}":
             if !wakeDraft.isEmpty { wakeDraft.removeLast() }
@@ -534,7 +536,8 @@ final class TerminalSession: ObservableObject, Identifiable {
 
     /// Called on each poll: delivers queued messages once the agent is free.
     func retryPendingMessages() {
-        guard !pendingMessages.isEmpty, kind.isAgent else { return }
+        guard !queue.isEmpty, kind.isAgent else { return }
+        expireQueued()
         if isAsleep { store?.wake(self); return }
         guard atRest, !isWaking else { return }
         flushPendingMessages()
@@ -665,7 +668,7 @@ final class TerminalSession: ObservableObject, Identifiable {
         if state == .idle && !isAsleep && inputIsEmpty && !dialogOnScreen {
             type("/remote-control", submit: true, countsAsWork: false)
         } else {
-            pendingMessages.append("/remote-control")
+            enqueue("/remote-control", from: nil)
             if isAsleep { store?.wake(self) }
         }
     }
@@ -693,31 +696,29 @@ final class TerminalSession: ObservableObject, Identifiable {
             return "not delivered: @\(label) has exited; restart it first"
         }
         if kind.isAgent, isAsleep || isWaking {
-            pendingMessages.append(text)
-            if let sender { record(.message, "Message from @\(sender)") }
+            let message = enqueue(text, from: sender)
             if isAsleep { store?.wake(self) }
-            return "queued: @\(label) was asleep; it wakes with the same conversation and gets the message once ready"
+            return queuedReply(message, "was asleep; it wakes with the same conversation and gets the message once ready")
         }
         if submit, store?.pushViaChannel(text, to: self) == true {
             if let sender { record(.message, "Message from @\(sender)") }
             return "delivered to @\(label) (channel)"
         }
         if kind.isAgent && (state.needsAttention || dialogOnScreen || !inputIsEmpty) {
-            pendingMessages.append(text)
-            return "queued: @\(label) is busy at a prompt; it gets the message as soon as that clears"
+            return queuedReply(enqueue(text, from: sender), "is busy at a prompt; it gets the message as soon as that clears")
         }
         // Typed into a CLI that hasn't drawn its prompt yet, a message is lost; typed before the
         // previous one's Return, two messages merge into one.
         if kind.isAgent, submit, state == .starting || submitInFlight {
-            pendingMessages.append(text)
-            return state == .starting ? "queued: @\(label) is starting; it gets the message once it's ready"
-                : "queued: @\(label) just got another message; it gets this one after that turn"
+            let message = enqueue(text, from: sender)
+            return queuedReply(message, state == .starting ? "is starting; it gets the message once it's ready"
+                : "just got another message; it gets this one after that turn")
         }
         // At rest with messages still queued, this one goes after them, not ahead.
-        if kind.isAgent, submit, atRest, !pendingMessages.isEmpty {
-            pendingMessages.append(text)
+        if kind.isAgent, submit, atRest, !queue.isEmpty {
+            let message = enqueue(text, from: sender)
             flushPendingMessages()
-            return "queued: @\(label) gets it after the \(pendingMessages.count - 1) before it"
+            return queuedReply(message, "gets it after the \(queue.count - 1) before it")
         }
         type(text, submit: submit)
         if let sender { record(.message, "Message from @\(sender)") }
@@ -730,7 +731,7 @@ final class TerminalSession: ObservableObject, Identifiable {
         let text = sanitizeMessage(text)
         guard !text.isEmpty else { return "" }
         if kind.isAgent, !now, state == .working || state == .starting {
-            pendingMessages.append(text)
+            enqueue(text, from: nil)
             return "queued"
         }
         return deliver(text, from: nil)
@@ -743,14 +744,52 @@ final class TerminalSession: ObservableObject, Identifiable {
     }
 
     func removeQueued(at index: Int) {
-        guard pendingMessages.indices.contains(index) else { return }
-        pendingMessages.remove(at: index)
+        guard queue.indices.contains(index) else { return }
+        store?.messageOutcome(queue.remove(at: index), to: self, .dropped("the user removed it from the queue"))
     }
 
     /// Sends a queued message right away instead of waiting for the turn to end.
     func sendQueuedNow(at index: Int) {
-        guard pendingMessages.indices.contains(index), atRest || state == .working, !submitInFlight, !dialogOnScreen, inputIsEmpty else { return }
-        type(pendingMessages.remove(at: index), submit: true)
+        guard queue.indices.contains(index), atRest || state == .working, !submitInFlight, !dialogOnScreen, inputIsEmpty else { return }
+        land(queue.remove(at: index))
+    }
+
+    /// How long a message may wait in the queue before it is given up on and its sender told,
+    /// rather than sitting there unseen while the sender believes it went through.
+    static let queuedMessageExpiry: TimeInterval = 60 * 60
+
+    @discardableResult
+    private func enqueue(_ text: String, from sender: String?) -> QueuedMessage {
+        let message = QueuedMessage(text: text, sender: sender)
+        queue.append(message)
+        return message
+    }
+
+    /// What send_message tells the sender: plainly not delivered yet, and that it will hear.
+    private func queuedReply(_ message: QueuedMessage, _ reason: String) -> String {
+        guard message.sender != nil else { return "queued: @\(label) " + reason }
+        return "Queued (message \(message.id)): NOT delivered yet; @\(label) \(reason). You'll be told when it lands, or if it can't."
+    }
+
+    private func land(_ message: QueuedMessage) {
+        // Tako's own slash commands start no turn, so they mustn't hold the queue.
+        type(message.text, submit: true, countsAsWork: !message.text.hasPrefix("/remote-control"))
+        if let sender = message.sender { record(.message, "Message from @\(sender)") }
+        store?.messageOutcome(message, to: self, .delivered)
+    }
+
+    func expireQueued(now: Date = Date()) {
+        let expired = queue.filter { now.timeIntervalSince($0.queuedAt) >= Self.queuedMessageExpiry }
+        guard !expired.isEmpty else { return }
+        queue.removeAll { now.timeIntervalSince($0.queuedAt) >= Self.queuedMessageExpiry }
+        let minutes = Int(Self.queuedMessageExpiry / 60)
+        expired.forEach { store?.messageOutcome($0, to: self, .expired("still queued after \(minutes) min")) }
+    }
+
+    /// Everything still queued, for when the terminal closes.
+    func takeQueue() -> [QueuedMessage] {
+        defer { queue = [] }
+        return queue
     }
 
     /// One flush in flight at a time: two landing together (the idle transition and the poll)
@@ -758,18 +797,16 @@ final class TerminalSession: ObservableObject, Identifiable {
     private var flushScheduled = false
 
     private func flushPendingMessages() {
-        guard !pendingMessages.isEmpty, !flushScheduled else { return }
+        guard !queue.isEmpty, !flushScheduled else { return }
         flushScheduled = true
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(400)) { [weak self] in
             self?.flushScheduled = false
             // One message per turn: the rest wait for the agent to finish the one just sent.
             // Not inside another message's paste-to-Return window: the two would merge.
             guard let self, self.atRest, !self.submitInFlight, !self.dialogOnScreen,
-                  self.inputIsEmpty, !self.pendingMessages.isEmpty else { return }
-            let message = self.pendingMessages.removeFirst()
-            // Tako's own slash commands start no turn, so they mustn't hold the queue.
-            self.type(message, submit: true, countsAsWork: !message.hasPrefix("/remote-control"))
-            if !self.pendingMessages.isEmpty { self.flushPendingMessages() }
+                  self.inputIsEmpty, !self.queue.isEmpty else { return }
+            self.land(self.queue.removeFirst())
+            if !self.queue.isEmpty { self.flushPendingMessages() }
         }
     }
 

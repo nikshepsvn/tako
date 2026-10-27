@@ -898,7 +898,7 @@ struct ControlHandler {
             }
             // Queued behind a dialog, the message waits on whoever answers it: say so, with the
             // choices, so Sumi answers the dialog instead of assuming the message went through.
-            if sender.isSumi, result.hasPrefix("queued"), target.dialogOnScreen {
+            if sender.isSumi, result.lowercased().hasPrefix("queued"), target.dialogOnScreen {
                 let menu = PromptScreen.menu(target.surface.readViewport())
                 let choices = menu.isEmpty ? "" : " Its choices: " + menu.map { "\($0.number). \($0.text)" }.joined(separator: "; ") + "."
                 return .success(text: result + ". @\(target.label) is showing a dialog, so the message waits until it's answered."

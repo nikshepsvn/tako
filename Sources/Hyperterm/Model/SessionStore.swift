@@ -176,6 +176,8 @@ final class SessionStore: ObservableObject {
     private var lastOutline: [SessionOutline] = []
     private var persistWork: DispatchWorkItem?
     let notifier = AttentionNotifier()
+    /// Receipts for queued messages, gathered per sender.
+    var messageReceipts = MessageReceipts()
     /// Previews and tests post no banners.
     private(set) var notifiesUser = true
     /// Previews and tests write nothing to disk: the test host shares the app's support folder.
@@ -475,6 +477,7 @@ final class SessionStore: ObservableObject {
         // Its workspace's dev server goes too: restored without it, it would hold the port forever.
         if session.kind.isAgent { (browsers(ownedBy: session) + servers(ownedBy: session)).forEach(close) }
         dropAllApprovals(for: session)
+        messagesDropped(from: session, reason: "@\(session.label) was closed")
         rememberClosed(session)
         if session.spec.labelSource == .user || session.spec.labelSource == nil {
             reservedLabels[session.label] = Date()
