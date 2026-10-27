@@ -72,7 +72,7 @@ struct ControlRequest: Codable {
     var tiles: TileSpec?
     /// For `new` from Sumi: how many agents take the same task.
     var count: Int?
-    /// For `history` reopen: labels or ids of closed sessions.
+    /// For `history` reopen: labels or ids of closed sessions. For `wait`: several terminals.
     var targets: [String]?
     /// For `heavy`: the process holding the slot; it is released when that process exits.
     var pid: Int32?
@@ -91,7 +91,7 @@ struct ControlRequest: Codable {
     var url: String?
     /// For `act` choose: option numbers, one per question of a form (the first alone for a menu).
     var options: [Int]?
-    /// For `act` mode: a PermissionMode raw value.
+    /// For `act` mode: a PermissionMode raw value. For `wait` on `targets`: all | any.
     var mode: String?
     /// For `act` interrupt: Ctrl-C instead of Esc.
     var hard: Bool?

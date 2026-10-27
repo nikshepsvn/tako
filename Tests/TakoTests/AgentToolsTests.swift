@@ -162,6 +162,89 @@ final class AgentToolsTests: XCTestCase {
         ])
     }
 
+    // MARK: - wait_for on several
+
+    func testWaitForManyMapsItsArguments() throws {
+        let request = try XCTUnwrap(agentToolRequest("wait_for", ["terminals": ["@api", "@web"], "mode": "any"]))
+        XCTAssertEqual(request.targets, ["@api", "@web"])
+        XCTAssertEqual(request.mode, "any")
+        XCTAssertEqual(agentToolRequest("wait_for", ["terminals": "api,web"])?.targets, ["api", "web"], "a list in one string")
+    }
+
+    func testAllWaitsForEveryTarget() {
+        let web = agent("web", state: .working)
+        let (store, me, api) = fixture(apiState: .working, extra: [web])
+        let replies = Replies()
+        handler(store, me).handle(waitMany(["api", "@web"]), reply: replies.add)
+        XCTAssertEqual(store.agentTools.waits.count, 2)
+        api.apply(.processStarted, source: "test", force: .idle)
+        XCTAssertTrue(replies.texts.isEmpty, "@web is still working")
+        web.apply(.processStarted, source: "test", force: .failed("exit 1"))
+        XCTAssertEqual(replies.texts, ["2 of 2 done:\n@api is idle\n@web is failed (exit 1)"])
+        XCTAssertTrue(store.agentTools.waits.isEmpty)
+    }
+
+    func testAnyAnswersOnTheFirstAndDropsTheRest() {
+        let web = agent("web", state: .working)
+        let (store, me, api) = fixture(apiState: .working, extra: [web])
+        let replies = Replies()
+        handler(store, me).handle(waitMany(["api", "web"], mode: "any"), reply: replies.add)
+        web.apply(.processStarted, source: "test", force: .idle)
+        XCTAssertEqual(replies.texts, ["1 of 2 done:\nnot yet: @api is working\n@web is idle"], "in the order named")
+        XCTAssertTrue(store.agentTools.waits.isEmpty, "the other wait ends with the group")
+        api.apply(.processStarted, source: "test", force: .idle)
+        XCTAssertEqual(replies.all.count, 1, "one reply")
+    }
+
+    func testTargetsAlreadyAtRestCountAtOnce() {
+        let web = agent("web", state: .working)
+        let (store, me, _) = fixture(extra: [web])
+        let any = Replies()
+        handler(store, me).handle(waitMany(["api", "web"], mode: "any"), reply: any.add)
+        XCTAssertEqual(any.texts, ["1 of 2 done:\n@api is idle\nnot yet: @web is working"])
+        XCTAssertTrue(store.agentTools.waits.isEmpty, "nothing left open")
+
+        let all = Replies()
+        handler(store, me).handle(waitMany(["api", "web"]), reply: all.add)
+        XCTAssertTrue(all.texts.isEmpty)
+        XCTAssertEqual(store.agentTools.waits.count, 1, "only @web is waited on")
+        store.agentToolsSessionClosed(web)
+        XCTAssertEqual(all.texts, ["2 of 2 done:\n@api is idle\n@web was closed"], "a closed target is done")
+    }
+
+    func testAGroupTimesOutWithEachState() {
+        let web = agent("web", state: .working)
+        let (store, me, api) = fixture(apiState: .working, extra: [web])
+        let done = expectation(description: "timed out")
+        let replies = Replies()
+        store.startGroupWait(on: [api, web], caller: me.id, goal: .done, regex: nil, mode: .all, timeout: 0.05) { response in
+            replies.add(response)
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 2)
+        XCTAssertEqual(replies.texts, ["0 of 2 done, timed out after 0 s:\nnot yet: @api is working\nnot yet: @web is working"])
+        XCTAssertTrue(store.agentTools.waits.isEmpty)
+    }
+
+    func testAGroupFollowsReadsRulesAndCountsOnceTowardTheCap() {
+        let shell = TerminalSession(spec: LaunchSpec(label: "sh", kind: .shell, cwd: "/workspace/atlas"), resume: false)
+        let web = agent("web", state: .working)
+        let (store, me, _) = fixture(apiState: .working, extra: [shell, web])
+        let replies = Replies()
+        handler(store, me).handle(waitMany(["api", "sh"]), reply: replies.add)
+        handler(store, me).handle(waitMany(["api", "me"]), reply: replies.add)
+        handler(store, me).handle(waitMany(["api", "web"], mode: "first"), reply: replies.add)
+        XCTAssertEqual(replies.errors, ["@sh is a shell; agents can't read shells", "that's you; wait on another terminal", "mode must be all or any"])
+        XCTAssertTrue(store.agentTools.waits.isEmpty)
+
+        for _ in 1..<SessionStore.waitCapPerCaller { handler(store, me).handle(waitMany(["api", "web"]), reply: replies.add) }
+        XCTAssertEqual(store.agentTools.waits.count, 2 * (SessionStore.waitCapPerCaller - 1))
+        XCTAssertEqual(replies.errors.count, 3, "each group is one wait")
+        handler(store, me).handle(waitMany(["api", "web"]), reply: replies.add)
+        handler(store, me).handle(waitMany(["api", "web"]), reply: replies.add)
+        XCTAssertEqual(replies.errors.last, "you already have \(SessionStore.waitCapPerCaller) waits open; let one finish first")
+    }
+
     // MARK: - team_board
 
     func testClaimsRefuseOverlapsAndAskTheHolderOnce() {
@@ -316,8 +399,7 @@ final class AgentToolsTests: XCTestCase {
     private func fixture(apiState: AgentState = .idle, extra: [TerminalSession] = []) -> (SessionStore, TerminalSession, TerminalSession) {
         let me = agent("me"), api = agent("api", state: apiState)
         let store = SessionStore(previewSessions: [me, api] + extra, previewLayout: .grid)
-        me.store = store
-        api.store = store
+        for session in [me, api] + extra { session.store = store }
         return (store, me, api)
     }
 
@@ -329,6 +411,13 @@ final class AgentToolsTests: XCTestCase {
 
     private func handler(_ store: SessionStore, _ caller: TerminalSession) -> ControlHandler {
         ControlHandler(store: store, caller: .session(caller.id.uuidString))
+    }
+
+    private func waitMany(_ targets: [String], mode: String? = nil) -> ControlRequest {
+        var request = ControlRequest(cmd: .wait)
+        request.targets = targets
+        request.mode = mode
+        return request
     }
 
     private func wait(_ target: String) -> ControlRequest {

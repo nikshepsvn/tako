@@ -29,6 +29,8 @@ struct AgentWait {
     let regex: NSRegularExpression?
     /// Output waits: how far the target's output has been checked.
     var cursor: String
+    /// Set for one target of a wait on several (SessionStore+WaitGroup), which counts once.
+    var group: UUID? = nil
     let reply: ControlServer.Reply
 }
 
@@ -53,14 +55,8 @@ extension SessionStore {
             reply(.success(text: "@\(target.label) has exited (\(target.state.detail ?? "")); nothing more will print"))
             return
         }
-        if let caller, agentTools.waits.values.filter({ $0.caller == caller }).count >= Self.waitCapPerCaller {
-            reply(.failure("you already have \(Self.waitCapPerCaller) waits open; let one finish first"))
-            return
-        }
-        let id = UUID()
-        let cursor = goal == .output ? LogTail.cursor(LogTail.lines(recentOutput(of: target, lines: Self.outputWindow))) : ""
-        agentTools.waits[id] = AgentWait(target: target.id, caller: caller, goal: goal, regex: regex, cursor: cursor, reply: reply)
-        if goal == .output { ensureOutputPoll() }
+        if let refusal = waitCapRefusal(caller) { return reply(refusal) }
+        let id = registerWait(on: target, caller: caller, goal: goal, regex: regex, group: nil, reply: reply)
         DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, let wait = self.agentTools.waits.removeValue(forKey: id) else { return }
@@ -68,6 +64,24 @@ extension SessionStore {
                 wait.reply(.success(text: "timed out after \(Int(timeout)) s; \(now)"))
             }
         }
+    }
+
+    /// The refusal for a caller already holding the most waits; a wait on several counts once.
+    func waitCapRefusal(_ caller: UUID?) -> ControlResponse? {
+        guard let caller else { return nil }
+        let open = Set(agentTools.waits.filter { $0.value.caller == caller }.map { $0.value.group ?? $0.key })
+        guard open.count >= Self.waitCapPerCaller else { return nil }
+        return .failure("you already have \(Self.waitCapPerCaller) waits open; let one finish first")
+    }
+
+    /// Holds `reply` until the target's state or output answers it; the caller times it out.
+    func registerWait(on target: TerminalSession, caller: UUID?, goal: AgentWait.Goal, regex: NSRegularExpression?,
+                      group: UUID?, reply: @escaping ControlServer.Reply) -> UUID {
+        let id = UUID()
+        let cursor = goal == .output ? LogTail.cursor(LogTail.lines(recentOutput(of: target, lines: Self.outputWindow))) : ""
+        agentTools.waits[id] = AgentWait(target: target.id, caller: caller, goal: goal, regex: regex, cursor: cursor, group: group, reply: reply)
+        if goal == .output { ensureOutputPoll() }
+        return id
     }
 
     /// Why a wait is over, or nil while it isn't. `done` is the turn ending: idle with no
