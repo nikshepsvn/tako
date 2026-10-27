@@ -38,7 +38,7 @@ struct ClaudeAdapter: AgentAdapter {
         // statusline unchanged (`ht statusline` runs it).
         let statusLine: [String: Any] = ["type": "command", "command": "\(htPath) statusline", "padding": 0]
         var settings: [String: Any] = ["hooks": hooks, "permissions": ["allow": allow], "statusLine": statusLine]
-        if !AgentBrowser.agentsMayUseOutsideChrome, !duplicateBrowserPlugins().isEmpty {
+        if !AgentBrowser.agentsMayUseOutsideChrome {
             settings["enabledPlugins"] = Dictionary(uniqueKeysWithValues: duplicateBrowserPlugins().map { ($0, false) })
         }
         return AgentIntegration.json(settings)
@@ -50,14 +50,26 @@ struct ClaudeAdapter: AgentAdapter {
     /// sessions keep them.
     static let browserPluginNames: Set<String> = ["chrome-devtools-mcp", "playwright"]
 
+    /// Always turned off, even when no settings file Tako reads enables it: a project's
+    /// `.claude/settings.json` can, and the user may turn it on after the agent's settings were
+    /// written. Turning off a plugin that isn't installed changes nothing.
+    static let alwaysOffPlugins = ["chrome-devtools-mcp@claude-plugins-official"]
+
+    /// Browser plugins to turn off: the official one, any installed from another marketplace, and
+    /// any the user's settings enable.
     static func duplicateBrowserPlugins(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> [String] {
-        let file = home.appendingPathComponent(".claude/settings.json")
-        guard let data = try? Data(contentsOf: file),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let plugins = json["enabledPlugins"] as? [String: Any] else { return [] }
-        return plugins.keys.filter { key in
-            (plugins[key] as? Bool) == true && browserPluginNames.contains(String(key.split(separator: "@").first ?? ""))
-        }.sorted()
+        let claude = home.appendingPathComponent(".claude")
+        func object(_ file: String) -> [String: Any]? {
+            guard let data = try? Data(contentsOf: claude.appendingPathComponent(file)) else { return nil }
+            return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        }
+        var keys = Set(alwaysOffPlugins)
+        keys.formUnion(((object("plugins/installed_plugins.json")?["plugins"]) as? [String: Any] ?? [:]).keys)
+        for file in ["settings.json", "settings.local.json"] {
+            let enabled = object(file)?["enabledPlugins"] as? [String: Any] ?? [:]
+            keys.formUnion(enabled.filter { ($0.value as? Bool) == true }.keys)
+        }
+        return keys.filter { browserPluginNames.contains(String($0.split(separator: "@").first ?? "")) }.sorted()
     }
 
     private static func mcpConfig() -> String {
