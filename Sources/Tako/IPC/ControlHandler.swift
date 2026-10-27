@@ -304,6 +304,9 @@ struct ControlHandler {
             guard let target = callerSession ?? (isUser ? resolve(request.target) : nil) else { return notFound(request.target) }
             store.sessionWantsAttention(target, title: "@\(target.label)", body: sanitizeMessage(request.text ?? ""))
             return .success()
+        case .link:
+            guard isUser else { return .failure("only the user controls Tako Link") }
+            return link(request)
         case .permission, .subscribe, .browser, .heavy, .act, .sumi, .wait, .changes, .orphans, .doctor:
             return .success()
         }

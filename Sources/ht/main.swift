@@ -27,6 +27,8 @@ usage: ht <command>
   hook <source> [payload]          forward an agent hook event (used by agents)
   heavy -- <command…>              wait for a heavy-job slot (builds, tests), then run the command
   doctor                           Tako's health: a day of hooks, messages and gc, memory, helpers, channels
+  link [status|on|off|name <n>|pair <peer>|confirm|cancel|unpair <peer>|approve <id> [text]|deny <id>]
+                                   Tako Link: friends' Takos on this network (status prints JSON)
 """
 
 func fail(_ message: String, code: Int32 = 1) -> Never {
@@ -234,6 +236,18 @@ case "browser":
 
 case "doctor":
     print(requireOK(request(.doctor) { $0.from = callerSession }).text ?? "")
+
+case "link":
+    let action = args.first ?? "status"
+    let rest = Array(args.dropFirst())
+    let response = requireOK(request(.link) {
+        $0.text = action
+        $0.label = rest.first
+        // approve <id> [edited text…]; name <the whole name>
+        if action == "approve", rest.count > 1 { $0.payload = rest.dropFirst().joined(separator: " ") }
+        if action == "name" { $0.label = rest.joined(separator: " ") }
+    })
+    print(response.text ?? "ok")
 
 case "-h", "--help", "help":
     print(usage)
