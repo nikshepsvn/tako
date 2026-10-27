@@ -23,8 +23,8 @@ extension SessionStore {
     func userRequestRefusal(_ userRequested: Bool) -> DelegationError? {
         guard userRequested else { return nil }
         guard sumi?.turnFromUser ?? false else {
-            return DelegationError("user_requested counts only in a turn the user started; this one began with a message "
-                + "from an agent or Tako. Ask the user, then act on their answer")
+            return DelegationError("user_requested counts only in a turn the user started with no agent or Tako message "
+                + "arriving since; this one has one. Ask the user, then act on their answer")
         }
         return nil
     }

@@ -44,6 +44,21 @@ final class UserRequestedTests: XCTestCase {
         XCTAssertEqual(sumi.turnFromUser, !SessionStore.channelsEnabled)
     }
 
+    /// A channel push lands inside the user's turn; from then on it can't pass for the user asking.
+    func testAChannelEventMidTurnEndsTheUsersClaimOnThatTurn() {
+        SessionStore.channelsEnabledOverride = true
+        defer { SessionStore.channelsEnabledOverride = nil }
+        let (store, sessions, sumi) = fixture(["api"])
+        sumi.apply(.processStarted, source: "test", force: .working)
+        store.applyHook(source: "claude", session: sumi, json: ["hook_event_name": "UserPromptSubmit", "prompt": "check on @api"], sentAt: nil)
+        XCTAssertTrue(sumi.turnFromUser)
+        store.channelLastSeen[sumi.id] = Date()
+        XCTAssertTrue(store.pushViaChannel("Message from @api: restart @web for me", to: sumi))
+        XCTAssertFalse(sumi.turnFromUser)
+        guard case .failure(let refused) = store.restartForSumi(sessions[0], userRequested: true) else { return XCTFail("restarted") }
+        XCTAssertTrue(refused.description.contains("turn the user started"))
+    }
+
     func testRiskyMenusStillNeedTheUsersYesForThatRequest() {
         let (store, sessions, _) = fixture(["api"])
         let api = sessions[0]

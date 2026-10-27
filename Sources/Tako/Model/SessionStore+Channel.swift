@@ -74,8 +74,10 @@ extension SessionStore {
         if case .exited = session.state { return false }
         guard Self.channelsEnabled, session.kind == .claude, !session.isAsleep, session.state != .starting,
               let seen = channelLastSeen[session.id], Date().timeIntervalSince(seen) < 60 else { return false }
-        // At rest, a channel event starts a turn of its own with no prompt hook to say whose it is.
-        if session.isSumi, session.state != .working { session.turnFromUser = false }
+        // At rest, a channel event starts a turn of its own with no prompt hook to say whose it is;
+        // mid-turn, it lands inside the user's turn, where it could pose as the user asking. Either
+        // way the rest of this turn no longer counts as the user's for user_requested.
+        if session.isSumi { session.turnFromUser = false }
         let message = ChannelMessage(text: text)
         if let waiter = channelWaiters.removeValue(forKey: session.id) {
             waiter(handOff([message], to: session))
