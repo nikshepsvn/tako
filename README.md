@@ -430,7 +430,7 @@ The interface is built on one design system, `Sources/Tako/UI/Design.swift`: six
 
 Tako was called Hyperterm until October 2026. An existing install migrates automatically on first launch: `~/.hyperterm` moves to `~/.tako` and stays behind as a symlink to it (so PATH lines, worktrees and saved paths keep working), the CEF cache moves to `~/Library/Caches/Tako`, and Claude channels are re-registered as `tako`. The bundle id (`dev.hyperterm.app`) keeps the old spelling so your preferences and permissions carry over, as do the `ht` CLI (also linked as `tako`) and the `HT_*` environment variables.
 
-Chromium comes from [CefSwift](https://github.com/Rajaniraiyn/CefSwift) (MIT, pinned in `project.yml`). `scripts/embed-cef.sh` runs after each build: it caches the CEF distribution in `~/Library/Caches/Tako/cef` and assembles the framework plus the five helper apps Chromium needs. Agents' browser tools need Node.js (`npx chrome-devtools-mcp`).
+Chromium comes from [CefSwift](https://github.com/Rajaniraiyn/CefSwift) (MIT), vendored at a pinned commit in `Packages/CefSwift` with a small message-pump patch. `scripts/embed-cef.sh` runs after each build: it caches the CEF distribution in `~/Library/Caches/Tako/cef` and assembles the framework plus the five helper apps Chromium needs. Agents' browser tools need Node.js (`npx chrome-devtools-mcp`).
 
 ### Project layout
 

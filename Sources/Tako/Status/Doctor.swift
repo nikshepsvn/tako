@@ -22,6 +22,8 @@ enum Doctor {
         /// Tako's MCP helpers (`ht mcp`, `ht mcp-lazy`, `ht browser-mcp`) per live agent.
         var helpers: [String: Int] = [:]
         var browser = (running: false, processes: 0, bytes: UInt64(0))
+        /// No browser open: Chromium stays up (it can't restart in-process) but its pump idles.
+        var browserIdle = false
         /// Worktrees Tako made that are still on disk and no session uses.
         var idleWorktrees: [Date] = []
         var channels = Channels.off
@@ -158,7 +160,8 @@ enum Doctor {
 
     private static func browser(_ snapshot: Snapshot) -> String {
         guard snapshot.browser.running else { return line(true, "browser (CEF): not started") }
-        return line(true, "browser (CEF): running, \(snapshot.browser.processes) processes, \(size(snapshot.browser.bytes))")
+        let state = snapshot.browserIdle ? "idle, no pages open" : "running"
+        return line(true, "browser (CEF): \(state), \(snapshot.browser.processes) processes, \(size(snapshot.browser.bytes))")
     }
 
     private static func worktrees(_ snapshot: Snapshot) -> String {

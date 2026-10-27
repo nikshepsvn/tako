@@ -89,6 +89,8 @@ final class DoctorTests: XCTestCase {
         XCTAssertTrue(report.contains("! agents: 0 live; CRASH-LOOPING: @web"), report)
         XCTAssertTrue(report.contains("! MCP helpers: @api 14 (over 8; others ≤ 2)"), report)
         XCTAssertTrue(report.contains("✓ browser (CEF): running, 5 processes, 400 MB"), report)
+        snapshot.browserIdle = true
+        XCTAssertTrue(Doctor.report(snapshot, events: events).contains("✓ browser (CEF): idle, no pages open, 5 processes, 400 MB"))
         XCTAssertTrue(report.contains("! worktrees: 1 unused"), report)
         XCTAssertTrue(report.contains("! channels: on, but ~/.claude.json has no \"tako\" server"), report)
     }

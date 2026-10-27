@@ -43,6 +43,8 @@ final class AgentBrowser {
     }
 
     var isRunning: Bool { CefRuntime.shared.isInitialized }
+    /// Running with no browser open: Chromium's message pump has dropped to its 1 Hz idle tick.
+    var isIdle: Bool { CefRuntime.shared.isPumpIdle }
 
     /// Starts Chromium if needed. Returns false (with `startError`) when it can't.
     @discardableResult

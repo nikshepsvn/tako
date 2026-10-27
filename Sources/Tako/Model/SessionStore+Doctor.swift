@@ -21,6 +21,7 @@ extension SessionStore {
         for agent in agents { if let count = helpers[agent.id] { snapshot.helpers[agent.label] = count } }
         let browser = ProcessUsage.browserProcesses()
         snapshot.browser = (AgentBrowser.shared.isRunning, browser.count, browser.footprint)
+        snapshot.browserIdle = AgentBrowser.shared.isIdle
         let live = Set(sessions.map(\.spec.workPath))
         let channelsOn = Self.channelsEnabled
         let htPath = AgentIntegration.htPath
