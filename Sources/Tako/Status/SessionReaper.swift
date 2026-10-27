@@ -153,9 +153,106 @@ enum SessionReaper {
         var processes: [TrackedProcess] { lock.lock(); defer { lock.unlock() }; return Array(Set(all)) }
     }
 
-    /// The same process (pid and start time) is still running.
+    /// The same process (pid and start time) is still running. One on its way out counts (it
+    /// can be stuck there, draining its terminal) though proc_pidinfo no longer reports it; a
+    /// zombie doesn't, as it has exited and only waits for its parent to collect it.
     static func isRunning(_ process: TrackedProcess) -> Bool {
-        facts(process.pid)?.start == process.start
+        guard let info = kernelEntry(process.pid) else { return false }
+        return startTime(info) == process.start && info.kp_proc.p_stat != SZOMB
+    }
+
+    /// The process table's entry, which (unlike proc_pidinfo) is readable for setuid processes
+    /// such as `login` and for processes on their way out.
+    private static func kernelEntry(_ pid: pid_t) -> kinfo_proc? {
+        guard pid > 0 else { return nil }
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0, info.kp_proc.p_pid == pid else { return nil }
+        return info
+    }
+
+    private static func startTime(_ info: kinfo_proc) -> UInt64 {
+        UInt64(info.kp_proc.p_starttime.tv_sec) * 1_000_000 + UInt64(info.kp_proc.p_starttime.tv_usec)
+    }
+
+    // MARK: - Closing a terminal
+
+    /// What runs on a terminal: its root (the `login` libghostty spawned, our own child) and
+    /// every other process whose controlling terminal it is.
+    struct Terminal: Sendable, Equatable {
+        var root: TrackedProcess?
+        var others: [TrackedProcess] = []
+    }
+
+    static func terminal(onTTY tty: dev_t) -> Terminal {
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_TTY, Int32(bitPattern: UInt32(truncatingIfNeeded: tty))]
+        var size = 0
+        guard sysctl(&mib, 4, nil, &size, nil, 0) == 0, size > 0 else { return Terminal() }
+        var procs = [kinfo_proc](repeating: kinfo_proc(), count: size / MemoryLayout<kinfo_proc>.stride + 8)
+        size = procs.count * MemoryLayout<kinfo_proc>.stride
+        guard sysctl(&mib, 4, &procs, &size, nil, 0) == 0 else { return Terminal() }
+        let mine = getpid()
+        var terminal = Terminal()
+        for info in procs.prefix(size / MemoryLayout<kinfo_proc>.stride) {
+            let pid = info.kp_proc.p_pid
+            guard pid > 1, pid != mine, info.kp_proc.p_stat != SZOMB else { continue }
+            let process = TrackedProcess(pid: pid, start: startTime(info), session: "")
+            if info.kp_eproc.e_ppid == mine { terminal.root = process } else { terminal.others.append(process) }
+        }
+        return terminal
+    }
+
+    /// Signals what is still the same process. The root is our own child, which `signal`
+    /// (for good reason) never touches, and setuid `login` hides from proc_pidinfo.
+    private static func signalTerminal(_ processes: [TrackedProcess], _ signal: Int32) {
+        for process in processes where process.pid > 1 && process.pid != getpid() && isRunning(process) {
+            kill(process.pid, signal)
+        }
+    }
+
+    /// Ends a closing terminal's processes before libghostty frees it, then calls `completion`
+    /// on another queue, within about `2 * grace` plus a second. Freeing a surface joins its IO
+    /// thread, which hangs up the child `login` and loops until it has exited, then joins the
+    /// reader. A session leader on its way out first waits for its terminal's output to drain,
+    /// and the reader stalls on a mailbox only the joined threads empty, so with a busy program
+    /// on the terminal the free hung the app for good. Ended here, while libghostty still reads
+    /// the terminal, the free has nothing left to wait for.
+    ///
+    /// The root gets the hangup a closed terminal gives it (what libghostty would send), the
+    /// rest a hangup and SIGTERM like any other stop. If the root hasn't gone after `grace`,
+    /// what keeps the terminal busy is killed (ignoring the hangup, or refilling the output the
+    /// root drains on its way out), then after another `grace` the root itself. Whatever else
+    /// on the terminal outlives the first `grace` is killed too: anything still writing to it
+    /// could stall the reader again.
+    static func endTerminal(tty: dev_t, grace: TimeInterval = 1,
+                            log: @escaping @Sendable (String) -> Void = { EventLog.record("teardown", $0) },
+                            completion: @escaping @Sendable () -> Void) {
+        // Not `queue`: these waits would hold up every other stop behind them.
+        DispatchQueue.global(qos: .userInitiated).async {
+            let started = Date()
+            let terminal = terminal(onTTY: tty)
+            if let root = terminal.root { signalTerminal([root], SIGHUP) }
+            signalTerminal(terminal.others, SIGHUP)
+            signalTerminal(terminal.others, SIGTERM)
+            var others = terminal.others
+            if let root = terminal.root, !waitUntilGone([root], timeout: grace) {
+                // Listed again: a loop may have started more since. The root still holds the
+                // terminal, so whatever is on it is still this terminal's.
+                if isRunning(root) { others += self.terminal(onTTY: tty).others }
+                signalTerminal(others, SIGKILL)
+                if !waitUntilGone([root], timeout: grace) {
+                    signalTerminal([root], SIGKILL)
+                    log("killed a terminal's login \(Int(grace * 2)) s after its hangup")
+                    _ = waitUntilGone([root], timeout: 0.5)
+                }
+            }
+            if !waitUntilGone(others, timeout: max(0, grace - Date().timeIntervalSince(started))) {
+                signalTerminal(others, SIGKILL)
+                _ = waitUntilGone(others, timeout: 0.5)
+            }
+            completion()
+        }
     }
 
     private static func waitUntilGone(_ processes: [TrackedProcess], timeout: TimeInterval) -> Bool {
