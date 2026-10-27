@@ -161,7 +161,12 @@ struct AgentRow: View {
                 StateLabel(session: session)
             }
             Group {
-                if session.state.needsAttention {
+                if let exit = startupExit {
+                    StartupExitCard(session: session, reason: exit, restart: { actions.restart(session) })
+                } else if session.state.needsAttention {
+                    if let screen = startupScreen {
+                        Text("Waiting on " + screen).font(Typeface.callout).foregroundStyle(Palette.attention).lineLimit(1)
+                    }
                     ApprovalStrip(session: session, store: store, actions: actions)
                 } else if let line = detailLine {
                     Text(line.text)
@@ -193,6 +198,27 @@ struct AgentRow: View {
         return false
     }
 
+    /// Before this start of the agent first reached its prompt. Once it has, the startup lines
+    /// are gone for good (until a restart).
+    private var inStartup: Bool {
+        session.kind.isAgent && !store.startupHealth.reachedReady(session.id, startedAt: session.createdAt)
+    }
+
+    /// A screen only the user can get it past (trusting the folder, signing in, one Tako
+    /// doesn't know), named the way a person would.
+    private var startupScreen: String? {
+        guard inStartup, case .needsInput(let reason) = session.state, TerminalSession.isUsersOwn(reason) else { return nil }
+        if reason == TerminalSession.trustReason { return "folder trust" }
+        if reason.hasPrefix("Sign in to ") { return "sign-in to " + reason.dropFirst("Sign in to ".count) }
+        return "a startup screen"
+    }
+
+    /// Why it stopped, when it stopped before ever reaching its prompt.
+    private var startupExit: String? {
+        guard inStartup, case .exited(let why) = store.startupOutcome(session) else { return nil }
+        return why
+    }
+
     /// The one line under the name: what it's doing now, else what it last said.
     private var detailLine: (text: String, mono: Bool, color: Color)? {
         switch session.state {
@@ -219,8 +245,13 @@ struct AgentRow: View {
         let racing = store.raceSiblings(of: session).count
         let overlap = session.overlapBadge
         let delegation = session.delegation
-        if review != nil || queued > 0 || racing > 0 || overlap != nil || delegation != nil || session.isMinimized {
+        let looping = store.startupHealth.isCrashLooping(session.id, now: Date())
+        if review != nil || queued > 0 || racing > 0 || overlap != nil || delegation != nil || session.isMinimized || looping {
             HStack(spacing: Space.xs) {
+                if looping {
+                    Tag(text: "Crash-looping", tint: Palette.failed)
+                        .help("Exited soon after starting \(store.startupHealth.quickExitCount(session.id, now: Date()))× in the last hour. Read its terminal before restarting it again.")
+                }
                 if session.isMinimized {
                     Tag(text: "Parked").help("Minimized off the canvas. Click to bring it back.")
                 }
@@ -262,6 +293,42 @@ struct AgentRow: View {
         if let evidence = session.testEvidence { lines.append(evidence.passed ? "Tests pass" : "Tests fail") }
         if let cost = session.usage.costUSD, cost > 0 { lines.append(String(format: "Cost: $%.2f", cost)) }
         return lines.joined(separator: "\n")
+    }
+}
+
+/// An agent that stopped before reaching its prompt: why, its last words, and Restart.
+private struct StartupExitCard: View {
+    @ObservedObject var session: TerminalSession
+    let reason: String
+    let restart: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            Text("Exited: " + reason).font(Typeface.callout).foregroundStyle(Palette.failed).lineLimit(2)
+            let tail = lastLines
+            if !tail.isEmpty {
+                Text(tail.joined(separator: "\n"))
+                    .font(Typeface.codeSmall)
+                    .foregroundStyle(Tone.faint)
+                    .lineLimit(3)
+                    .truncationMode(.tail)
+                    .textSelection(.enabled)
+                    .help(tail.joined(separator: "\n"))
+            }
+            Button("Restart", action: restart)
+                .buttonStyle(PanelButtonStyle())
+                .help("Start the agent again in this terminal (⌘R)")
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    /// The screen's last few lines: usually the error that stopped it. Read only while this card
+    /// shows, which is only for an agent that exited during startup.
+    private var lastLines: [String] {
+        Array(session.surface.readViewport().split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .suffix(3))
     }
 }
 
@@ -820,13 +887,17 @@ private struct SidebarFooter: View {
             Hairline()
             WindowControls(store: store, actions: actions)
                 .padding(.horizontal, Space.m)
-            // Both meters stack when Claude and Codex are both in use; each is labeled then.
-            VStack(alignment: .leading, spacing: Space.s) {
-                let both = store.rateLimits != nil && store.codexRateLimits != nil
-                if let limits = store.rateLimits { UsageMeter(limits: limits, label: both ? "Claude" : nil) }
-                if let limits = store.codexRateLimits { UsageMeter(limits: limits, label: both || store.rateLimits == nil ? "Codex" : nil) }
+            // Both meters stack when Claude and Codex are both in use; each is labeled then. The
+            // machine button sits at the row's end, where there's room at any sidebar width.
+            HStack(alignment: .center, spacing: Space.s) {
+                VStack(alignment: .leading, spacing: Space.s) {
+                    let both = store.rateLimits != nil && store.codexRateLimits != nil
+                    if let limits = store.rateLimits { UsageMeter(limits: limits, label: both ? "Claude" : nil) }
+                    if let limits = store.codexRateLimits { UsageMeter(limits: limits, label: both || store.rateLimits == nil ? "Codex" : nil) }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                MachineButton(steward: .shared, store: store)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
             // Sumi's mark floats in this corner (SumiDock), so the row starts past it
             // and is as tall as its button.
             .frame(minHeight: buttonSize)
@@ -860,10 +931,9 @@ private struct WindowControls: View {
             IconButton(symbol: "sidebar.right", help: "Show or hide the inspector (⌥⌘I)", action: actions.toggleInspector)
             if store.phoneModeAvailable || store.isPhoneModeOn { PhoneModeButton(store: store) }
             Spacer(minLength: Space.xs)
-            TakoMemoryChip(steward: .shared)
             let waiting = store.attentionCount
             if waiting > 0 {
-                WaitingBadge(count: waiting, labels: store.waitingSessions.map(\.label), action: store.selectNextNeedingAttention)
+                WaitingBadge(count: waiting, labels: store.waitingSessions.map(\.label), store: store)
             }
             Menu {
                 Button("New Terminal…", action: actions.newSession)
@@ -939,25 +1009,14 @@ private struct QueuedTag: View {
     }
 }
 
-/// Tako's own memory, shown in the footer only past the point where a restart is worth it.
-private struct TakoMemoryChip: View {
-    @ObservedObject var steward: Steward
-
-    var body: some View {
-        if steward.takoBytes >= TakoFootprint.warnBytes {
-            Tag(text: "Tako " + ByteCountFormatter.string(fromByteCount: Int64(steward.takoBytes), countStyle: .memory),
-                tint: Palette.attention)
-                .help("Tako itself is using a lot of memory. Restart it when nothing is mid-task; sessions resume. Details in the inspector's Info tab.")
-        }
-    }
-}
-
-/// Shown only while sessions need you; takes you to the one that has waited longest.
+/// Shown only while sessions need you. Opens standup: every agent, what needs you first, each
+/// row a way to it. ⌘J still goes straight to the one that has waited longest.
 private struct WaitingBadge: View {
     let count: Int
     /// Who is waiting, longest first: the coalesced banner's names, kept on screen.
     var labels: [String] = []
-    let action: () -> Void
+    let store: SessionStore
+    @State private var showsStandup = false
 
     private var who: String {
         guard !labels.isEmpty else { return "" }
@@ -966,7 +1025,7 @@ private struct WaitingBadge: View {
     }
 
     var body: some View {
-        Button(action: action) {
+        Button { showsStandup.toggle() } label: {
             HStack(spacing: Space.xs) {
                 Circle().fill(Palette.attention).frame(width: 6, height: 6)
                 Text(String(count)).monospacedDigit()
@@ -978,8 +1037,12 @@ private struct WaitingBadge: View {
             .background(Palette.attention.opacity(0.12), in: Capsule())
         }
         .buttonStyle(.plain)
-        .help((count == 1 ? "1 needs you" : "\(count) need you") + " · go to the one that has waited longest (⌘J)" + who)
+        .help((count == 1 ? "1 needs you" : "\(count) need you") + " · standup of every agent (⌥⌘J); ⌘J goes to the one that has waited longest" + who)
         .accessibilityLabel(count == 1 ? "1 session needs you" : "\(count) sessions need you")
+        .accessibilityHint("Opens standup")
+        .popover(isPresented: $showsStandup, arrowEdge: .top) {
+            StandupView(store: store) { showsStandup = false }
+        }
     }
 }
 

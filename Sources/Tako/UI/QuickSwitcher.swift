@@ -71,6 +71,11 @@ enum SwitcherModel {
                              tint: Tone.muted, kind: .action { store.run(action, for: session) }, group: "Project")
             }
         }
+        if store.sessions.contains(where: { $0.kind.isAgent && !$0.isSumi }) {
+            all.append(SwitcherItem(id: "standup", title: "Standup", subtitle: "Every agent: state, progress, blockers, cost (⌥⌘J)",
+                                    symbol: "list.bullet.rectangle", tint: Tone.muted,
+                                    kind: .action(send(#selector(AppDelegate.showStandup(_:))))))
+        }
         all += SessionKind.allCases.filter { $0 != .server }.map { kind in
             SwitcherItem(id: "new-\(kind.rawValue)", title: "New \(kind.displayName)", subtitle: "In the current folder",
                          symbol: kind.symbol, tint: kind.tint, kind: .action { quickCreate(kind) }, group: "Create", mark: kind)

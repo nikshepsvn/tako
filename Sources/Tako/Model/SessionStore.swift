@@ -133,6 +133,8 @@ final class SessionStore: ObservableObject {
     let notifier = AttentionNotifier()
     /// Receipts for queued messages, gathered per sender.
     var messageReceipts = MessageReceipts()
+    /// Each agent's sent messages and what became of them, for its Activity tab.
+    let sentMessages = SentMessageLog()
     /// Previews and tests post no banners.
     private(set) var notifiesUser = true
     /// Previews and tests write nothing to disk: the test host shares the app's support folder.

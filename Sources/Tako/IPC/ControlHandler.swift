@@ -988,6 +988,7 @@ struct ControlHandler {
             }
             let framed = agentMessagePrefix + "\(sender.label) (\(sender.kind.displayName), via Tako): \(singleLine(text))"
             let result = target.deliver(framed, from: sender.label)
+            store.noteSent(result, text: framed, preview: text, from: sender, to: target)
             // Sumi hears the reply to what it sent, without having to ask for a watch.
             if sender.isSumi, !target.isSumi, store.sumiWatches[target.id] == nil {
                 store.sumiWatches[target.id] = ""

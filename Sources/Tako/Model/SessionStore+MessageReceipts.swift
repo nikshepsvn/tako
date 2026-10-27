@@ -50,6 +50,13 @@ extension SessionStore {
             case .stale(let why): return ("still queued", why)
             }
         }()
+        if message.sender != nil {
+            switch outcome {
+            case .delivered: sentMessages.update(message.id, .delivered)
+            case .dropped(let why): sentMessages.update(message.id, .dropped(why))
+            case .stale: sentMessages.update(message.id, .stillWaiting)
+            }
+        }
         EventLog.record("message", session: target.label, "\(message.id) \(result)" + (why.map { ": " + $0 } ?? ""),
                         fields: ["id": message.id, "from": message.sender ?? "-", "outcome": result, "waited_s": waited])
         guard let senderLabel = message.sender,

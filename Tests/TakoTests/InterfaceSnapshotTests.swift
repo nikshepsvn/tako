@@ -77,6 +77,13 @@ final class InterfaceSnapshotTests: XCTestCase {
                     size: NSSize(width: 380, height: 360), name: "sumi-plan-board", output: output)
         try capture(NothingOnCanvasView(), size: NSSize(width: 720, height: 420),
                     name: "nothing-on-canvas", output: output)
+        try capture(StandupView(store: store, dismiss: {}), size: NSSize(width: StandupView.width, height: 336),
+                    name: "standup", output: output)
+        try capture(MachinePopover(store: store, preview: machinePreview()), size: NSSize(width: MachinePopover.width, height: 476),
+                    name: "machine", output: output)
+        try capture(WorktreeCleanupView(repoRoots: [], inUse: [], preview: worktreePreview(), onDone: {}),
+                    size: NSSize(width: 760, height: 480), name: "worktree-cleanup", output: output)
+        try captureStartup(output)
         try captureWorkspace(store: store, output: output)
         try captureWorkspace(store: SessionStore(previewSessions: []), output: output,
                              name: "workspace-empty", showInspector: false, captureNarrow: false)
@@ -106,7 +113,75 @@ final class InterfaceSnapshotTests: XCTestCase {
         store.agentTools.boards["/workspace/atlas"] = board
         store.sumiBrain.approvals.learn(project: "/workspace/atlas", key: "Bash(pnpm test)", answer: .always)
         store.sumiBrain.approvals.learn(project: "/workspace/atlas", key: "Bash(git status)", answer: .approve)
-        _ = waiting.deliver("Rebase on main before running the suite", from: builder.label)
+        let framed = "Rebase on main before running the suite"
+        let reply = waiting.deliver(framed, from: builder.label)
+        store.noteSent(reply, text: framed, preview: framed, from: builder, to: waiting)
+        let navigation = sessions[2], now = Date()
+        store.sentMessages.record(.init(messageID: "c3", target: navigation.label, preview: "Navigation tokens moved to Space.s; pull before editing",
+                                        sentAt: now.addingTimeInterval(-540), outcome: .delivered, updatedAt: now.addingTimeInterval(-530)),
+                                  from: builder.label)
+        store.sentMessages.record(.init(messageID: "m2", target: "release-notes", preview: "Hold the notes until the API lands",
+                                        sentAt: now.addingTimeInterval(-1500), outcome: .dropped("@release-notes was closed"),
+                                        updatedAt: now.addingTimeInterval(-1200)),
+                                  from: builder.label)
+    }
+
+    /// Agents in their first moments: starting, waiting on folder trust, exited before their
+    /// prompt, and crash-looping. The one already up shows no startup line.
+    private func captureStartup(_ output: URL) throws {
+        let starting = sample("fresh-start", kind: .claude, branch: "feat/search", state: .starting)
+        let trust = sample("new-folder", kind: .claude, branch: "feat/billing", state: .needsInput(TerminalSession.trustReason))
+        let exited = sample("broken-config", kind: .codex, branch: "feat/export", state: .exited(1))
+        let looping = sample("flaky-hooks", kind: .claude, branch: "feat/hooks", state: .exited(1))
+        let ready = sample("ready", kind: .claude, branch: "feat/ready", state: .idle)
+        let sessions = [starting, trust, exited, looping, ready]
+        defer { sessions.forEach { $0.terminate() } }
+        let store = SessionStore(previewSessions: sessions)
+        store.startupHealth.sawReady(ready.id, startedAt: ready.createdAt)
+        let now = Date()
+        for _ in 0...StartupHealth.loopExits { store.startupHealth.sawExit(looping.id, startedAt: now, at: now) }
+        // At the sidebar's narrowest, with usage meters: the footer's machine button still fits.
+        store.rateLimits = RateLimits(fiveHourPercent: 34, fiveHourResets: now.addingTimeInterval(7200),
+                                      sevenDayPercent: 12, sevenDayResets: now.addingTimeInterval(86400 * 3))
+        try capture(SidebarView(store: store, actions: inertActions), size: NSSize(width: 280, height: 720),
+                    name: "sidebar-startup", output: output)
+    }
+
+    private func machinePreview() -> (readout: MachineReadout, trend: MachineReadout.Trend?, orphans: [OrphanProcess]?) {
+        var readout = MachineReadout()
+        readout.takoBytes = 812 << 20
+        readout.uptime = 26 * 3600
+        readout.freeBytes = 9_400 << 20
+        readout.totalBytes = 32 << 30
+        readout.browser = (true, 6, 640 << 20)
+        readout.agentCount = 3
+        readout.agentBytes = 2_150 << 20
+        readout.topAgents = [("design-system", 1_020 << 20), ("api-contracts", 730 << 20), ("navigation", 400 << 20)]
+        readout.helpers = [("navigation", 11), ("design-system", 3), ("api-contracts", 3)]
+        let orphan = OrphanProcess(pid: 48211, pgid: 48211, start: UInt64(Date().addingTimeInterval(-7200).timeIntervalSince1970 * 1_000_000),
+                                   command: "node /workspace/atlas/node_modules/.bin/vite --port 5174", memory: 182 << 20,
+                                   why: "its terminal @web closed")
+        return (readout, MachineReadout.Trend(start: 520 << 20, peak: 904 << 20, growing: false), [orphan])
+    }
+
+    private func worktreePreview() -> (entries: [WorktreeEntry], recent: [(date: Date, text: String)]) {
+        let now = Date(), root = "/workspace/atlas", base = root + "/.claude/worktrees/"
+        let unmerged = WorkAtRisk(uncommitted: 0, unmerged: 3), clean = WorkAtRisk(uncommitted: 0, unmerged: 0)
+        func entry(_ name: String, _ branch: String, merged: Bool = false, dirty: Bool = false, inUse: Bool = false,
+                   _ facts: WorktreeJanitor.Facts, usedBy: String? = nil) -> WorktreeEntry {
+            WorktreeEntry(path: base + name, branch: branch, repoRoot: root, merged: merged, dirty: dirty, inUse: inUse,
+                          decision: WorktreeJanitor.decision(facts, usedBy: usedBy, now: now))
+        }
+        let entries = [
+            entry("design-system", "feat/interface", inUse: true, .init(inUse: true), usedBy: "design-system"),
+            entry("search", "feat/search", dirty: true, .init(dirty: true, risk: unmerged)),
+            entry("billing", "feat/billing", .init(risk: unmerged, idleSince: now.addingTimeInterval(-2 * 86400))),
+            entry("old-spike", "spike/grid", merged: true, .init(risk: clean)),
+            entry("export", "feat/export", .init(lock: .held(51207), risk: unmerged)),
+        ]
+        let recent = [(date: now.addingTimeInterval(-3 * 3600), text: "archived ~/workspace/atlas/.claude/worktrees/menu (nothing left to lose): archived"),
+                      (date: now.addingTimeInterval(-26 * 3600), text: "lock cleared: ~/workspace/atlas/.claude/worktrees/ui-pass: its lock's pid 4411 is gone")]
+        return (entries, recent)
     }
 
     private var inertActions: SessionActions {

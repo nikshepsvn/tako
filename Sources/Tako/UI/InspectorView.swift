@@ -56,7 +56,7 @@ private struct InspectorContent: View {
             switch tab {
             case .plan: PlanView(session: session, store: store)
             case .changes: ChangesView(session: session, store: store)
-            case .activity: ActivityView(session: session, store: store)
+            case .activity: ActivityView(session: session, store: store, sent: store.sentMessages)
             case .info: InfoView(session: session, store: store, actions: actions)
             }
         }
@@ -757,10 +757,12 @@ struct SplitRow: Identifiable {
 private struct ActivityView: View {
     @ObservedObject var session: TerminalSession
     let store: SessionStore
+    @ObservedObject var sent: SentMessageLog
 
     var body: some View {
+        let sentByThis = sent.entries(for: session.label)
         VStack(spacing: 0) {
-            if session.timeline.isEmpty && session.turns.isEmpty {
+            if session.timeline.isEmpty && session.turns.isEmpty && sentByThis.isEmpty {
                 EmptyMessage(symbol: "clock", title: "No activity yet",
                              detail: "Prompts, commands, approvals and test results appear here as \(session.label) works.")
             } else {
@@ -775,6 +777,7 @@ private struct ActivityView: View {
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
+                        if !sentByThis.isEmpty { SentMessagesSection(entries: sentByThis) }
                         if !session.turns.isEmpty { turns }
                         if !session.timeline.isEmpty { timeline }
                     }

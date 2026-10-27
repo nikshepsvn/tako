@@ -384,7 +384,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let inUse = Set(store.sessions.map(\.spec.workPath))
         // Closed agents' checkpoints live in the shared repo; archiving their worktree prunes them.
         let closedIDs = Dictionary(grouping: store.recentlyClosed, by: \.workPath).mapValues { $0.map(\.id.uuidString) }
-        let view = WorktreeCleanupView(repoRoots: roots, inUse: inUse, sessionIDs: closedIDs) { [weak self] in self?.dismissSheet() }
+        let knowledge = store.leftoverKnowledge()
+        let context = WorktreeContext(closed: knowledge.closed,
+                                      users: Dictionary(store.sessions.map { ($0.spec.workPath, $0.label) }, uniquingKeysWith: { first, _ in first }),
+                                      bases: knowledge.bases)
+        let view = WorktreeCleanupView(repoRoots: roots, inUse: inUse, sessionIDs: closedIDs, context: context) { [weak self] in self?.dismissSheet() }
         let sheet = NSWindow(contentViewController: NSHostingController(rootView: view))
         sheetWindow = sheet
         window.beginSheet(sheet)
@@ -415,6 +419,35 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.addChildWindow(panel, ordered: .above)
         panel.makeKeyAndOrderFront(nil)
         switcher = panel
+    }
+
+    // MARK: - Standup
+
+    private var standup: SwitcherPanel?
+
+    /// Standup from the menu, ⌘P or ⌥⌘J: the same card the waiting badge opens, floating at the
+    /// top of the window like the switcher, since the badge isn't there when nothing waits.
+    func toggleStandup() {
+        if let standup, standup.isVisible { standup.close(); return }
+        guard let window else { return }
+        let panel = SwitcherPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.level = .floating
+        panel.appearance = NSAppearance(named: .darkAqua)
+        let view = StandupView(store: store, dismiss: { [weak panel] in panel?.close() })
+            .floatingSurface(fallback: Tone.deep)
+            .clipShape(RoundedRectangle(cornerRadius: Radius.pane, style: .continuous))
+        let host = NSHostingView(rootView: view)
+        host.frame.size = host.fittingSize
+        panel.contentView = host
+        panel.setContentSize(host.fittingSize)
+        let frame = window.frame
+        panel.setFrameTopLeftPoint(NSPoint(x: frame.midX - host.fittingSize.width / 2, y: frame.maxY - 110))
+        window.addChildWindow(panel, ordered: .above)
+        panel.makeKeyAndOrderFront(nil)
+        standup = panel
     }
 
     // MARK: - Mention picker
