@@ -72,6 +72,8 @@ extension SessionStore {
             session.lastHookSentAt = sentAt
         }
         session.lastHookAt = Date()
+        // Before the agent's first edit, so the edit hook can check it against others' claims.
+        registerClaimWorkspace(session)
         switch source {
         case "claude":
             handleAgentHook(session, json, source: "claude hook")

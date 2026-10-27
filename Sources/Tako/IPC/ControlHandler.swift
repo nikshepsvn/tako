@@ -204,8 +204,11 @@ struct ControlHandler {
         case .hook:
             // Hook events only count when the kernel traces them to the session they describe.
             guard let session = callerSession else { return .success() }
-            store.handleHook(source: request.source ?? "", session: session, payload: request.payload ?? "{}", sentAt: request.sentAt)
-            return .success()
+            let payload = request.payload ?? "{}"
+            store.handleHook(source: request.source ?? "", session: session, payload: payload, sentAt: request.sentAt)
+            // `ht hook` prints this for the CLI: Codex's hooks, and Claude's without the listener.
+            let advice = store.adviseEditHook(sessionID: session.id.uuidString, payload: Data(payload.utf8))
+            return .success(text: advice.map { String(decoding: $0, as: UTF8.self) })
         case .statusline:
             guard let session = callerSession else { return .success() }
             store.handleStatusLine(session: session, payload: request.payload ?? "{}")

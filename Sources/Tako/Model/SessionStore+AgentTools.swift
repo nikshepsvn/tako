@@ -125,6 +125,7 @@ extension SessionStore {
             finishWait(id, "@\(session.label) was closed")
         }
         releaseAllClaims(of: session)
+        claimIndex.register(session.id, nil)
         agentTools.lastNotified[session.id] = nil
     }
 
@@ -260,6 +261,7 @@ extension SessionStore {
         var board = board(key)
         let result = board.claim(paths, owner: session.id, label: session.label, until: Date().addingTimeInterval(TimeInterval(minutes * 60)))
         agentTools.boards[key] = board
+        syncClaimIndex()
         var lines: [String] = []
         if !result.claimed.isEmpty {
             lines.append("claimed for \(minutes) min: " + result.claimed.joined(separator: ", "))
@@ -298,6 +300,7 @@ extension SessionStore {
         var board = board(key)
         let released = board.release(paths, owner: session.id)
         agentTools.boards[key] = board
+        syncClaimIndex()
         return released.isEmpty ? "you held none of those" : "released " + released.joined(separator: ", ")
     }
 
@@ -305,6 +308,7 @@ extension SessionStore {
         for key in agentTools.boards.keys where agentTools.boards[key]?.claims.contains(where: { $0.owner == session.id }) == true {
             agentTools.boards[key]?.release(nil, owner: session.id)
         }
+        if !claimIndex.isEmpty { syncClaimIndex() }
     }
 
     /// A session's live claims, for list_terminals.

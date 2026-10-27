@@ -180,7 +180,9 @@ case "hook":
         req.payload = payload
         // Stamped at start so the app can drop events that lose the race to the socket.
         req.sentAt = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
-        _ = try? sendControlRequest(req, timeout: 5)
+        // Tako answers an edit inside another agent's file claim with a heads-up for the agent's
+        // context (PreToolUse JSON); every other event gets nothing to print.
+        if let advice = (try? sendControlRequest(req, timeout: 5))?.text, !advice.isEmpty { print(advice) }
     }
     exit(0)
 

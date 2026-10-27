@@ -41,6 +41,8 @@ final class SessionStore: ObservableObject {
     var overlapWatch = OverlapWatch()
     /// Worker agents' waits, team boards and notification limits (SessionStore+AgentTools).
     var agentTools = AgentToolsState()
+    /// The team boards' claims, readable off main by the hook listener (SessionStore+ClaimAdvice).
+    nonisolated let claimIndex = ClaimIndex()
     /// Called when a session's status changes. It can change which tiles show (grid hides exited
     /// sessions) and their chrome, but must not pull keyboard focus away from where the user is.
     var onStatusChange: (() -> Void)?

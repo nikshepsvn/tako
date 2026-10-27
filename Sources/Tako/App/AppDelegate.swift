@@ -177,7 +177,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startHookServer() {
         let store = self.store
-        let server = HookServer { source, sessionID, body, sentAt in
+        let server = HookServer(advisor: { sessionID, body in
+            store.adviseEditHook(sessionID: sessionID, payload: body)
+        }) { source, sessionID, body, sentAt in
             store.receiveHook(source: source, sessionID: sessionID, payload: body, sentAt: sentAt)
         }
         do {
