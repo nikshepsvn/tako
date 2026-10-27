@@ -366,6 +366,9 @@ extension SessionStore {
 
     /// The steward saw something it won't act on alone; Sumi checks and tells the user.
     func reportToSumi(_ escalation: Escalation) {
+        // Once per episode, so the briefing and doctor can count them whether or not Sumi runs.
+        EventLog.record("escalation", session: escalation.label, escalation.message,
+                        fields: ["what": escalation.kind.rawValue, "bytes": escalation.footprintBytes])
         guard sumi != nil, stewardWarningIsNews(escalation) else { return }
         addToSumiDigest(SumiEvent(label: escalation.label, kind: .steward(escalation.message)))
     }

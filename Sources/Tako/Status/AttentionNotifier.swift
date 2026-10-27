@@ -37,6 +37,9 @@ final class AttentionNotifier: NSObject, UNUserNotificationCenterDelegate {
     let sink: NotificationSink
     private var gate = NotificationGate()
     private var flushScheduled = false
+    /// Banners shown and held back since the last hourly health line (`takeCounts`): the gate's
+    /// work, for `ht doctor`, without a log line per banner.
+    private(set) var counts = (sent: 0, suppressed: 0)
 
     private static let approvalCategory = "dev.tako.approval"
     private static let allowAction = "allow"
@@ -62,18 +65,26 @@ final class AttentionNotifier: NSObject, UNUserNotificationCenterDelegate {
     /// burst becomes one banner.
     func post(session: TerminalSession, title: String, body: String, foreground: Bool,
               kind: NotificationGate.Kind, now: Date = Date()) {
-        if NSApp.isActive && !foreground { return }
-        if isLooking?(session) == true { return }
+        if NSApp.isActive && !foreground || isLooking?(session) == true {
+            counts.suppressed += 1
+            return
+        }
         let item = NotificationGate.Item(sessionID: session.id, label: session.label, kind: kind, title: title, body: body)
         switch gate.offer(item, now: now) {
         case .deliver(let delivery): show(delivery)
         case .hold(let until): scheduleFlush(at: until)
-        case .drop: break
+        case .drop: counts.suppressed += 1
         }
     }
 
     /// The session's user turn began: it may tell the user each kind once more.
     func turnStarted(_ session: TerminalSession) { gate.turnStarted(session.id) }
+
+    /// The counts so far, starting new ones.
+    func takeCounts() -> (sent: Int, suppressed: Int) {
+        defer { counts = (0, 0) }
+        return counts
+    }
 
     /// Sends what the gate held back, coalesced.
     func flushHeld(now: Date = Date()) {
@@ -90,6 +101,9 @@ final class AttentionNotifier: NSObject, UNUserNotificationCenterDelegate {
     }
 
     private func show(_ delivery: NotificationGate.Delivery) {
+        counts.sent += 1
+        // Held ones coalesced into this banner were suppressed as banners of their own.
+        counts.suppressed += max(0, delivery.count - 1)
         deliver(identifier: UUID().uuidString, sessionID: delivery.sessionID, title: delivery.title, body: delivery.body, category: nil)
     }
 

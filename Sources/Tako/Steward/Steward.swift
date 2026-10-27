@@ -109,6 +109,10 @@ final class Steward: ObservableObject {
     private var lowered: [UUID: Set<pid_t>] = [:]
     private var escalationTracker = EscalationTracker()
     private var tako = TakoFootprint()
+    private var trend = FootprintTrend()
+    /// When this run began, on the uptime clock, for the hourly footprint line and `ht doctor`.
+    private let startedUptime = ProcessInfo.processInfo.systemUptime
+    var uptime: TimeInterval { ProcessInfo.processInfo.systemUptime - startedUptime }
     /// Tako's own footprint at the last tick, for the inspector and `ht machine`.
     @Published private(set) var takoBytes: UInt64 = 0
     private var sleepTracker = SleepTracker()
@@ -203,6 +207,25 @@ final class Steward: ObservableObject {
         // Published in 64 MB steps so the readout doesn't redraw on every tick.
         let rounded = (tako.bytes >> 26) << 26
         if takoBytes != rounded { takoBytes = rounded }
+        recordTrend(now: now)
+    }
+
+    /// The hourly footprint line, and the one breakdown per run past the high-water mark, taken
+    /// off the main thread.
+    private func recordTrend(now: Date) {
+        let due = trend.update(tako.bytes, now: now)
+        let size = ByteCountFormatter.string(fromByteCount: Int64(tako.bytes), countStyle: .memory)
+        if due.log {
+            let fields = FootprintTrend.fields(footprint: tako.bytes, sessions: store?.sessions.count ?? 0, uptime: uptime,
+                                               notifications: store?.notifier.takeCounts() ?? (0, 0))
+            EventLog.record("footprint", "Tako uses \(size)", fields: fields)
+        }
+        guard due.breakdown else { return }
+        let bytes = tako.bytes
+        DispatchQueue.global(qos: .utility).async {
+            EventLog.record("footprint", "passed \(FootprintTrend.highWater >> 20) MB at \(size): breakdown",
+                            fields: ["footprint": bytes, "breakdown": MemoryBreakdown.capture()])
+        }
     }
 
     /// Between ticks: keeps each sampled session's tree current, so children started since the
@@ -365,6 +388,17 @@ final class Steward: ObservableObject {
     }
 
     // MARK: - Status
+
+    /// Tako's MCP helpers (`ht mcp`, `ht mcp-lazy`, `ht browser-mcp`) in each session's tree as of
+    /// the last tick, for `ht doctor`: a leak there multiplies by every agent.
+    func helperCounts() -> [UUID: Int] {
+        trees.mapValues { pids in
+            pids.filter { pid in
+                guard ProcessUsage.name(pid) == "ht", let argv = ProcessInspector.shared.arguments(pid), argv.count > 1 else { return false }
+                return ["mcp", "mcp-lazy", "browser-mcp"].contains(argv[1])
+            }.count
+        }
+    }
 
     func status() -> MachineStatus {
         let sessions = (store?.sessions ?? []).compactMap { session -> MachineStatus.Session? in

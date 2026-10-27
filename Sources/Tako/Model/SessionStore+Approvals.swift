@@ -125,8 +125,10 @@ extension SessionStore {
     /// what was approved on the user's behalf outlives the hook log.
     private func logApproval(_ session: TerminalSession, _ approval: PendingApproval, outcome: String) {
         let waited = (Date().timeIntervalSince(approval.createdAt) * 10).rounded() / 10
-        EventLog.record("approval", session: session.label, "\(outcome): \(approval.summary)",
-                        fields: ["tool": approval.toolName, "outcome": outcome, "waited_s": waited])
+        var fields: [String: Any] = ["tool": approval.toolName, "outcome": outcome, "waited_s": waited]
+        // Answered by Tako as the user always does there: the briefing counts these apart.
+        if sumiBrain.sumiAnswering { fields["by"] = "auto" }
+        EventLog.record("approval", session: session.label, "\(outcome): \(approval.summary)", fields: fields)
     }
 
     /// After a beat, so keys meant for the dialog just released land there first.

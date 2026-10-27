@@ -37,6 +37,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         Theme.load(from: GhosttyRuntime.shared.config)
         AppSettings.settleAutoSleepDefault(existingInstall: SessionStore.hasSavedState)
+        // Marks each run in events.jsonl, so `ht doctor` can count sweeps per launch.
+        EventLog.record("launch", "Tako started", fields: ["pid": Int(getpid())])
         // Sessions restore once both the sweep and the rest of launch are done.
         SessionReaper.sweepLeftovers { [weak self] in self?.restoreWhenReady() }
         TerminalSessionFactory.store = store

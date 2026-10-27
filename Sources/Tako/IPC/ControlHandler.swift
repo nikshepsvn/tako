@@ -165,7 +165,7 @@ struct ControlHandler {
             handleBrowser(request, reply: reply)
         case .subscribe:
             guard let agent = callerAgent, agent.kind == .claude else { reply(.success()); return }
-            store.subscribeChannel(agent, reply: reply)
+            store.subscribeChannel(agent, acks: request.acks, reply: reply)
         case .new where callerSumi != nil && (request.kind == SessionKind.claude.rawValue || request.kind == SessionKind.codex.rawValue):
             startAgentForSumi(request, reply: reply)
         case .close where callerSumi != nil:
@@ -190,6 +190,10 @@ struct ControlHandler {
             waitFor(request, reply: reply)
         case .changes:
             changes(request, reply: reply)
+        case .doctor:
+            // Read-only, but it names every agent and reads Claude's config: the user's and Sumi's.
+            guard isUser || callerSumi != nil else { reply(.failure("ht doctor is for the user or Sumi")); return }
+            store.doctor { reply(.success(text: $0)) }
         default:
             reply(handle(request))
         }
@@ -300,7 +304,7 @@ struct ControlHandler {
             guard let target = callerSession ?? (isUser ? resolve(request.target) : nil) else { return notFound(request.target) }
             store.sessionWantsAttention(target, title: "@\(target.label)", body: sanitizeMessage(request.text ?? ""))
             return .success()
-        case .permission, .subscribe, .browser, .heavy, .act, .sumi, .wait, .changes, .orphans:
+        case .permission, .subscribe, .browser, .heavy, .act, .sumi, .wait, .changes, .orphans, .doctor:
             return .success()
         }
     }

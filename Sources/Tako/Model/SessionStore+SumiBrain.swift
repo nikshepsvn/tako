@@ -12,7 +12,12 @@ extension SessionStore {
     /// One line (plus a short second one) per agent: state and for how long, what it's doing or
     /// last did, todo progress, diff against its base, uncommitted files, tests, cost, context,
     /// blockers and file overlaps. Git is read fresh off the main thread, so the numbers are now's.
-    func standup(only labels: [String]? = nil, now: Date = Date(), completion: @escaping @MainActor (String) -> Void) {
+    /// With `since`, a briefing of what happened from then (see `Briefing`) comes first.
+    func standup(only labels: [String]? = nil, since: String? = nil, now: Date = Date(),
+                 completion: @escaping @MainActor (String) -> Void) {
+        let start = since.map { Briefing.start($0, last: sumiBrain.lastStandup, now: now) }
+        sumiBrain.lastStandup = now
+        let live = start.flatMap { $0 }.map { briefingLive(since: $0) }
         let wanted = labels.map { Set($0.compactMap { find($0)?.id }) }
         let agents = orderedSessions.filter { session in
             !session.isSumi && session.kind != .browser && (wanted?.contains(session.id) ?? true)
@@ -28,9 +33,18 @@ extension SessionStore {
                               status.map { $0.split(separator: "\n").count })
                 lock.lock(); git[probe.id] = result; lock.unlock()
             }
+            var briefing: String?
+            if let since {
+                if let start = start.flatMap({ $0 }), let live {
+                    briefing = Briefing.describe(since: start, now: now, events: EventLog.read(since: start), live: live)
+                } else {
+                    briefing = "since: couldn't read \"\(since)\"; pass \"last\", a duration like \"8h\" or an ISO time"
+                }
+            }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    completion(self.describeStandup(agents, git: git, now: now))
+                    let standup = self.describeStandup(agents, git: git, now: now)
+                    completion(briefing.map { $0 + "\n\n" + standup } ?? standup)
                 }
             }
         }
@@ -77,6 +91,7 @@ extension SessionStore {
         var notes: [String] = []
         if let last = Self.turnSummary(session) { notes.append("last: " + Self.clip(last, 160)) }
         if let status = session.agentStatus { notes.append("status: " + Self.clip(status, 80)) }
+        notes += startupNotes(session, now: now)
         notes += blockers(session, dirty: git?.dirty, now: now)
         return notes.isEmpty ? line : line + "\n    " + notes.joined(separator: " · ")
     }
@@ -112,7 +127,7 @@ extension SessionStore {
         return session.timeline.last { $0.kind == .done }?.text
     }
 
-    static func duration(_ seconds: TimeInterval) -> String {
+    nonisolated static func duration(_ seconds: TimeInterval) -> String {
         let s = max(0, Int(seconds))
         if s < 60 { return "\(s)s" }
         if s < 3600 { return "\(s / 60)m" }
@@ -120,7 +135,7 @@ extension SessionStore {
         return "\(s / 86_400)d"
     }
 
-    static func clip(_ text: String, _ limit: Int) -> String {
+    nonisolated static func clip(_ text: String, _ limit: Int) -> String {
         let line = text.split(whereSeparator: \.isNewline).joined(separator: " ")
         return line.count > limit ? String(line.prefix(limit - 1)) + "…" : line
     }
@@ -160,6 +175,7 @@ extension SessionStore {
             }
             if let raw = args["status"] as? String {
                 guard let status = PlanTask.Status(rawValue: raw) else { return .failure(PlanError("status is todo, running, done, failed or blocked")) }
+                if plan.tasks[index].status != status { recordPlanTask(PlanTask(id: id, title: "", owner: plan.tasks[index].owner, status: status)) }
                 plan.tasks[index].status = status
                 if status == .todo { plan.tasks[index].announced = false }
             }
@@ -286,6 +302,7 @@ extension SessionStore {
         plan.tasks[index] = task
         sumiBrain.plan = plan
         guard let news else { return }
+        recordPlanTask(task)
         let moved = advancePlan()
         let open = sumiBrain.plan.tasks.filter { $0.status != .done }.count
         let tail = open == 0 ? " · plan complete: wrap up with the user" : ""
