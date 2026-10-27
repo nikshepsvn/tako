@@ -75,9 +75,11 @@ final class WorkAtRiskTests: XCTestCase {
 
     func testHeadlineNamesWhatIsAtRisk() {
         XCTAssertEqual(WorkAtRisk(uncommitted: 3, unmerged: 0).headline(base: "main"), "3 files aren't committed")
-        XCTAssertEqual(WorkAtRisk(uncommitted: 0, unmerged: 1).headline(base: "main"), "1 commit isn't in main yet")
+        XCTAssertEqual(WorkAtRisk(uncommitted: 0, unmerged: 1).headline(base: "main"), "1 commit isn't in main or pushed yet")
+        XCTAssertEqual(WorkAtRisk(uncommitted: 0, unmerged: 2).headline(base: "feat/x"),
+                       "2 commits aren't in feat/x or the default branch or pushed yet")
         XCTAssertEqual(WorkAtRisk(uncommitted: 1, unmerged: 2).headline(base: nil),
-                       "1 file isn't committed and 2 commits aren't in the base branch yet")
+                       "1 file isn't committed and 2 commits aren't in the base branch or pushed yet")
     }
 
     func testArchiveSavesUncommittedWorkOnTheBranchWithoutForce() {
@@ -89,7 +91,68 @@ final class WorkAtRiskTests: XCTestCase {
         XCTAssertEqual(kept, "keep me")
     }
 
+    // MARK: - A stale recorded base
+
+    /// The main checkout was on feat/x when the agent started, so feat/x is its recorded base;
+    /// the work then landed on main. It is safe, though feat/x never got it.
+    func testWorkMergedIntoMainIsSafeWhateverTheRecordedBase() {
+        git(root, "branch", "feat/x")
+        commitInTree("b.txt")
+        git(root, "merge", "--no-ff", "-m", "merge", "tako/agent")
+        XCTAssertEqual(WorkAtRisk.evaluate(at: tree, base: "feat/x"), WorkAtRisk(uncommitted: 0, unmerged: 0))
+    }
+
+    func testWorkPushedToItsOwnUpstreamIsSafe() {
+        let remote = addRemote()
+        commitInTree("b.txt")
+        XCTAssertEqual(WorkAtRisk.evaluate(at: tree, base: "main")?.unmerged, 1)
+        git(tree, "push", "-q", "-u", "origin", "tako/agent")
+        XCTAssertEqual(WorkAtRisk.evaluate(at: tree, base: "main"), WorkAtRisk(uncommitted: 0, unmerged: 0), remote)
+        commitInTree("c.txt")
+        XCTAssertEqual(WorkAtRisk.evaluate(at: tree, base: "main")?.unmerged, 1, "only the commit pushed nowhere counts")
+    }
+
+    /// A clone whose default branch isn't main or master is found through origin/HEAD.
+    func testWorkInTheRemoteDefaultBranchIsSafe() {
+        let remote = addRemote()
+        git(root, "branch", "-m", "main", "trunk")
+        git(root, "push", "-q", "origin", "trunk")
+        git(root, "remote", "set-head", "origin", "trunk")
+        commitInTree("b.txt")
+        XCTAssertEqual(WorkAtRisk.evaluate(at: tree, base: "feat/gone")?.unmerged, 1)
+        git(tree, "push", "-q", "origin", "HEAD:trunk")
+        git(root, "fetch", "-q", "origin")
+        XCTAssertEqual(WorkAtRisk.evaluate(at: tree, base: "feat/gone"), WorkAtRisk(uncommitted: 0, unmerged: 0), remote)
+    }
+
+    func testWorkThatExistsNowhereElseIsAtRisk() {
+        git(root, "branch", "feat/x")
+        _ = addRemote()
+        commitInTree("b.txt")
+        commitInTree("c.txt")
+        let risk = WorkAtRisk.evaluate(at: tree, base: "feat/x")
+        XCTAssertEqual(risk?.unmerged, 2)
+        XCTAssertEqual(risk?.isEmpty, false)
+    }
+
     // MARK: - helpers
+
+    private func commitInTree(_ name: String) {
+        write(tree, name, name + "\n")
+        git(tree, "add", "-A")
+        commit(tree, "add \(name)")
+    }
+
+    /// A bare origin holding main, with origin/HEAD pointing at it.
+    private func addRemote() -> String {
+        let remote = (root as NSString).deletingLastPathComponent + "/origin.git"
+        git(root, "init", "-q", "--bare", remote)
+        git(root, "remote", "add", "origin", remote)
+        git(root, "push", "-q", "origin", "main")
+        git(root, "remote", "set-head", "origin", "main")
+        return remote
+    }
+
 
     private func write(_ dir: String, _ name: String, _ text: String) {
         try? text.write(toFile: (dir as NSString).appendingPathComponent(name), atomically: true, encoding: .utf8)
