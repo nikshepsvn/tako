@@ -33,6 +33,29 @@ final class SessionReaperTests: XCTestCase {
         XCTAssertEqual(select(table, seeds: [mine, 200, 500, 1]), [])
     }
 
+    /// A shell that has only run built-ins (zsh, /bin/sleep) hides its environment, so its
+    /// terminal is recorded under its root's pid; closing it is matched by which root ended.
+    func testEndedTerminalsAreTheUnclaimedRootsNoLongerRunning() {
+        let keys = [ProcessInspector.unclaimedKey(200), ProcessInspector.unclaimedKey(300)]
+        XCTAssertEqual(ProcessInspector.endedTerminals(keys, alive: [200, 300]), [])
+        XCTAssertEqual(ProcessInspector.endedTerminals(keys, alive: [200]), [ProcessInspector.unclaimedKey(300)])
+        XCTAssertEqual(ProcessInspector.endedTerminals(keys, alive: []), keys)
+    }
+
+    func testEndedTerminalsIgnoreSessionIDs() {
+        let session = UUID().uuidString
+        XCTAssertEqual(ProcessInspector.endedTerminals([session, ProcessInspector.unclaimedPrefix + "x"], alive: []), [])
+    }
+
+    /// Jobs recorded under an unclaimed terminal reach the ledger like a session's, so the next
+    /// launch sweeps them after a crash.
+    func testUnclaimedTerminalJobsAreSweptLeftovers() {
+        let key = ProcessInspector.unclaimedKey(200)
+        let recorded = [TrackedProcess(pid: 300, start: 7, session: key)]
+        let facts: (pid_t) -> ProcessFacts? = { $0 == 300 ? ProcessFacts(start: 7, ppid: 1, pgid: 300, name: "sleep") : nil }
+        XCTAssertEqual(SessionReaper.leftovers(recorded, facts: facts), recorded)
+    }
+
     func testTreeDropsRecordedPidReusedByAnotherProcess() {
         let table = [entry(300, parent: 1, start: 9), entry(301, parent: 300)]
         let recorded = [TrackedProcess(pid: 300, start: 7, session: "s")]
