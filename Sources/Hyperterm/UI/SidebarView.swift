@@ -378,27 +378,6 @@ private struct HelperRail: Shape {
     }
 }
 
-/// A small braille spinner; still (one glyph) with Reduce Motion.
-private struct BrailleSpinner: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private static let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-
-    var body: some View {
-        Group {
-            if reduceMotion {
-                Text(Self.frames[0])
-            } else {
-                TimelineView(.periodic(from: .now, by: 0.1)) { context in
-                    Text(Self.frames[Int(context.date.timeIntervalSinceReferenceDate * 10) % Self.frames.count])
-                }
-            }
-        }
-        .font(Typeface.codeSmall)
-        .foregroundStyle(Palette.working)
-        .accessibilityHidden(true)
-    }
-}
-
 /// What an agent is blocked on, with the answer right there. A plan in plan mode is shown as a
 /// plan, with approving it as the primary action.
 private struct ApprovalStrip: View {

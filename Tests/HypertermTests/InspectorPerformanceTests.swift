@@ -1,3 +1,4 @@
+import AppKit
 import Darwin
 import XCTest
 @testable import Hyperterm
@@ -151,5 +152,26 @@ final class InspectorPerformanceTests: XCTestCase {
 
     func testMissingProcessIdentityStillFailsClosed() {
         XCTAssertEqual(ProcessInspector().identify(pid: -1), .unknown)
+    }
+
+    // MARK: - Main thread and spawned terminals
+
+    /// The helpers spinner steps in the render server: no TimelineView redrawing the sidebar.
+    @MainActor
+    func testSpinnerAnimatesWithCoreAnimationAndHoldsStillForReduceMotion() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 40, height: 20), styleMask: [.borderless],
+                              backing: .buffered, defer: true)
+        let spinner = BrailleSpinner.SpinnerView(frame: NSRect(x: 0, y: 0, width: 12, height: 14))
+        window.contentView?.addSubview(spinner)
+        let glyph = try XCTUnwrap(spinner.layer?.sublayers?.first)
+        let animation = try XCTUnwrap(glyph.animation(forKey: BrailleSpinner.SpinnerView.animationKey) as? CAKeyframeAnimation)
+        XCTAssertEqual(animation.values?.count, BrailleSpinner.SpinnerView.frames.count)
+        XCTAssertEqual(animation.calculationMode, .discrete)
+        XCTAssertEqual(animation.repeatCount, .infinity)
+        XCTAssertNotNil(glyph.contents)
+
+        spinner.reduceMotion = true
+        XCTAssertNil(glyph.animation(forKey: BrailleSpinner.SpinnerView.animationKey))
+        XCTAssertNotNil(glyph.contents, "Reduce Motion still shows one glyph")
     }
 }
