@@ -17,16 +17,16 @@ scripts/lint-design.sh || [ "${ALLOW_DESIGN_DEBT:-}" = 1 ]
 
 # Pure Foundation files and the tests that cover them.
 LOGIC=(
-  Sources/Hyperterm/UI/LayoutTree.swift
-  Sources/Hyperterm/Status/Checkpoints.swift
-  Sources/Hyperterm/Status/ProjectActions.swift
-  Sources/Hyperterm/Status/AgentOptions.swift
+  Sources/Tako/UI/LayoutTree.swift
+  Sources/Tako/Status/Checkpoints.swift
+  Sources/Tako/Status/ProjectActions.swift
+  Sources/Tako/Status/AgentOptions.swift
 )
 TESTS=(
-  Tests/HypertermTests/LayoutTreeTests.swift
-  Tests/HypertermTests/CheckpointTests.swift
-  Tests/HypertermTests/ProjectActionTests.swift
-  Tests/HypertermTests/AgentOptionTests.swift
+  Tests/TakoTests/LayoutTreeTests.swift
+  Tests/TakoTests/CheckpointTests.swift
+  Tests/TakoTests/ProjectActionTests.swift
+  Tests/TakoTests/AgentOptionTests.swift
 )
 
 work="$(mktemp -d)"
@@ -35,7 +35,7 @@ mkdir -p "$work/Sources/Logic" "$work/Tests/LogicTests"
 for file in "${LOGIC[@]}"; do [ -f "$file" ] && cp "$file" "$work/Sources/Logic/"; done
 cp Tests/LinuxSupport/*.swift "$work/Sources/Logic/" 2>/dev/null || true
 for file in "${TESTS[@]}"; do
-  [ -f "$file" ] && sed 's/@testable import Hyperterm/@testable import Logic/' "$file" > "$work/Tests/LogicTests/$(basename "$file")"
+  [ -f "$file" ] && sed 's/@testable import Tako/@testable import Logic/' "$file" > "$work/Tests/LogicTests/$(basename "$file")"
 done
 cat > "$work/Package.swift" <<'EOF'
 // swift-tools-version:5.9

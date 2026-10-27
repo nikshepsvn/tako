@@ -26,6 +26,11 @@ usage: ht <command>
   mcp-lazy --name n -- <command…>  run a stdio MCP server, started on first use (used by agents)
   hook <source> [payload]          forward an agent hook event (used by agents)
   heavy -- <command…>              wait for a heavy-job slot (builds, tests), then run the command
+  doctor                           Tako's health: a day of hooks, messages and gc, memory, helpers, channels
+  sumi                             start Sumi if it isn't running
+  link [status|on|off|name <n>|pair <peer>|confirm|cancel|unpair <peer>|approve <id> [text]|deny <id>
+       |add <name> <fingerprint> <host:port>]
+                                   Tako Link: friends' Takos on this network (status prints JSON)
 """
 
 func fail(_ message: String, code: Int32 = 1) -> Never {
@@ -180,7 +185,9 @@ case "hook":
         req.payload = payload
         // Stamped at start so the app can drop events that lose the race to the socket.
         req.sentAt = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
-        _ = try? sendControlRequest(req, timeout: 5)
+        // Tako answers an edit inside another agent's file claim with a heads-up for the agent's
+        // context (PreToolUse JSON); every other event gets nothing to print.
+        if let advice = (try? sendControlRequest(req, timeout: 5))?.text, !advice.isEmpty { print(advice) }
     }
     exit(0)
 
@@ -198,14 +205,15 @@ case "permission":
     exit(0)
 
 case "statusline":
-    // Claude statusLine: report telemetry to Tako, then print the user's own statusline.
+    // Claude statusLine: report telemetry to Tako when it changed, then print the user's own
+    // statusline (cached briefly; see StatusLineRunner for why every step is trimmed).
     let input = FileHandle.standardInput.readDataToEndOfFile()
-    if let callerSession, statusLineDue(session: callerSession) {
+    if let callerSession, StatusLineRunner.reportDue(session: callerSession, input: input) {
         var req = ControlRequest(cmd: .statusline)
         req.payload = String(decoding: input, as: UTF8.self)
         _ = try? sendControlRequest(req, timeout: 1)
     }
-    print(userStatusLine(input: input), terminator: "")
+    FileHandle.standardOutput.write(StatusLineRunner.render(input: input, environment: env))
     exit(0)
 
 case "mcp":
@@ -228,43 +236,27 @@ case "browser":
     let target = args.first.map { BrowserTarget.address($0, cwd: FileManager.default.currentDirectoryPath) }
     print(requireOK(request(.browser) { $0.from = callerSession; $0.url = target }).text ?? "")
 
+case "doctor":
+    print(requireOK(request(.doctor) { $0.from = callerSession }).text ?? "")
+
+case "sumi":
+    print(requireOK(request(.sumi) { $0.text = "start" }).text ?? "ok")
+
+case "link":
+    let action = args.first ?? "status"
+    let rest = Array(args.dropFirst())
+    let response = requireOK(request(.link) {
+        $0.text = action
+        $0.label = rest.first
+        // approve <id> [edited text…]; name <the whole name>
+        if action == "approve" || action == "add", rest.count > 1 { $0.payload = rest.dropFirst().joined(separator: " ") }
+        if action == "name" { $0.label = rest.joined(separator: " ") }
+    })
+    print(response.text ?? "ok")
+
 case "-h", "--help", "help":
     print(usage)
 
 default:
     fail("ht: unknown command '\(command)'\n\n\(usage)")
-}
-
-/// Claude reruns the statusline up to a few times a second; Tako needs one report every 2 s.
-/// The last report's time is a file's mtime in a per-user temp dir.
-func statusLineDue(session: String) -> Bool {
-    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ht-statusline")
-    let stamp = dir.appendingPathComponent(session.filter { $0.isHexDigit || $0 == "-" })
-    if let last = (try? FileManager.default.attributesOfItem(atPath: stamp.path))?[.modificationDate] as? Date,
-       Date().timeIntervalSince(last) < 2 { return false }
-    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    _ = FileManager.default.createFile(atPath: stamp.path, contents: nil)
-    return true
-}
-
-/// Runs the statusLine command from the user's own ~/.claude/settings.json with the same input.
-func userStatusLine(input: Data) -> String {
-    let settings = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/settings.json")
-    guard let data = try? Data(contentsOf: settings),
-          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let statusLine = json["statusLine"] as? [String: Any],
-          let command = statusLine["command"] as? String, !command.contains("ht statusline") else { return "" }
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/bin/sh")
-    process.arguments = ["-c", command]
-    let stdin = Pipe(), stdout = Pipe()
-    process.standardInput = stdin
-    process.standardOutput = stdout
-    process.standardError = FileHandle.nullDevice
-    do { try process.run() } catch { return "" }
-    stdin.fileHandleForWriting.write(input)
-    try? stdin.fileHandleForWriting.close()
-    let output = stdout.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    return String(decoding: output, as: UTF8.self)
 }

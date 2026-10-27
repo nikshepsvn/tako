@@ -32,6 +32,18 @@ enum ControlCommand: String, Codable {
     case phoneMode     // Phone Mode, from the user or Sumi: text = on | off | status
     case act           // Sumi acts on an agent: text = choose (options) | trust | signin | interrupt (hard)
                        // | keys (keys) | type (text in label, submit) | restart | mode (mode)
+    case sumi          // Sumi's board and memory: text = standup | plan | remember | recall, payload = arguments JSON
+    // Worker coordination tools (MCPAgentTools):
+    case wait          // block until target reaches text = done | needs-input | exited, or prints `pattern`
+    case changes       // target's diff: text = branch | uncommitted, patch, paths
+    case board         // the project's team board: text = read | note | claim | release
+    case logs          // target's output filtered: pattern (grep), errors in submit, since, lines
+    // Sumi's on-demand cleanup:
+    case orphans       // processes Tako started whose terminal is gone: text = list | kill, targets = pids
+    case doctor        // Tako's health summary, for the user (`ht doctor`) or Sumi
+    // Tako Link, the user's side (`ht link`): text = status | on | off | name | pair | confirm | cancel
+    // | unpair | approve | deny; label = name, peer or approval id; payload = edited text
+    case link
 }
 
 struct ControlRequest: Codable {
@@ -64,7 +76,7 @@ struct ControlRequest: Codable {
     var tiles: TileSpec?
     /// For `new` from Sumi: how many agents take the same task.
     var count: Int?
-    /// For `history` reopen: labels or ids of closed sessions.
+    /// For `history` reopen: labels or ids of closed sessions. For `wait`: several terminals.
     var targets: [String]?
     /// For `heavy`: the process holding the slot; it is released when that process exits.
     var pid: Int32?
@@ -72,14 +84,35 @@ struct ControlRequest: Codable {
     var note: String?
     /// For `approve` from Sumi in Phone Mode: the user said yes to this request on their phone.
     var userApproved: Bool?
+    /// For Sumi's `act` and `close`: the user asked for this directly, in their own words, in the
+    /// turn Sumi is acting in. Tako checks that the turn was the user's (`turnFromUser`).
+    var userRequested: Bool?
+    /// For Sumi's `close` with `userRequested`: close even with work at risk; the user said so.
+    var force: Bool?
+    /// For Sumi's `new`: seconds to wait for each agent to reach its prompt (0: don't wait).
+    var wait: Int?
     /// For `browser`: a page to open in the caller's browser (a URL, an address, or a file URL).
     var url: String?
     /// For `act` choose: option numbers, one per question of a form (the first alone for a menu).
     var options: [Int]?
-    /// For `act` mode: a PermissionMode raw value.
+    /// For `act` mode: a PermissionMode raw value. For `wait` on `targets`: all | any.
     var mode: String?
     /// For `act` interrupt: Ctrl-C instead of Esc.
     var hard: Bool?
+    /// For `wait` and `logs`: a regular expression output lines are matched against.
+    var pattern: String?
+    /// For `wait`: seconds before giving up. For `board` claim: minutes the claim lasts.
+    var timeout: Int?
+    /// For `logs`: the cursor a previous read returned; only lines after it come back.
+    var since: String?
+    /// For `changes`: include the patch. For `logs`: only error lines.
+    var flag: Bool?
+    /// For `changes` and `board`: files or globs, relative to the workspace root.
+    var paths: [String]?
+    /// For `subscribe`: ids of the channel messages this poller has written to Claude since its
+    /// last poll. Sent, even empty, only by pollers that confirm; an older `ht` leaves it out
+    /// and its hand-off counts as delivery, as before.
+    var acks: [String]?
 }
 
 /// The most agents one start_agent call may start on the same task.
@@ -124,11 +157,13 @@ struct SessionInfo: Codable, Equatable {
     var detached: Bool? = nil
     /// Claude subagents still running, which may outlast the session's own turn.
     var subagents: Int? = nil
+    /// Files and globs this agent claimed on its project's team board.
+    var claims: [String]? = nil
 
     /// `sumi` keeps its old wire name, so an `ht` from before the rename still reads it.
     enum CodingKeys: String, CodingKey {
         case id, label, kind, state, stateDetail, summary, title, cwd, command, ports, unread, agentSessionId
-        case labelSource, activity, project, branch, conflicts, asleep, delegation, detached, subagents
+        case labelSource, activity, project, branch, conflicts, asleep, delegation, detached, subagents, claims
         case sumi = "organizer"
     }
 }
@@ -137,6 +172,8 @@ struct ControlResponse: Codable {
     var ok: Bool
     /// For `subscribe`: messages to push into the session as channel events.
     var messages: [String]?
+    /// For `subscribe`: each message's id, in order, for the poller to acknowledge.
+    var messageIDs: [String]?
     var error: String?
     var sessions: [SessionInfo]?
     var session: SessionInfo?
@@ -154,14 +191,38 @@ struct ControlResponse: Codable {
 }
 
 enum ControlPaths {
-    /// ~/.hyperterm: short and space-free because these paths are typed into shells and
-    /// embedded in agent configs. $HT_HOME moves it, so a dev build (scripts/run.sh) keeps its
-    /// sessions, socket and browser profile apart from the installed app's.
+    static let directoryName = ".tako"
+    /// The folder's name before the rename to Tako. The app moves it to ~/.tako at launch and
+    /// leaves a symlink here for good: PATH lines, git worktree metadata, saved sessions and
+    /// agent configs all hold absolute ~/.hyperterm paths.
+    static let legacyDirectoryName = ".hyperterm"
+
+    /// ~/.tako: short and space-free because these paths are typed into shells and embedded in
+    /// agent configs. $HT_HOME moves it, so a dev build (scripts/run.sh) keeps its sessions,
+    /// socket and browser profile apart from the installed app's.
     static var supportDirectory: URL {
-        if let env = ProcessInfo.processInfo.environment["HT_HOME"], !env.isEmpty {
+        resolveSupportDirectory(home: FileManager.default.homeDirectoryForCurrentUser,
+                                environment: ProcessInfo.processInfo.environment)
+    }
+
+    /// The pre-rename folder in the user's home, whether it is still a folder or now a symlink.
+    static var legacySupportDirectory: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(legacyDirectoryName, isDirectory: true)
+    }
+
+    /// Shared by the app and `ht`, so both find the same folder before and after the app's move:
+    /// a real ~/.hyperterm with no ~/.tako is an install the new app hasn't launched on yet.
+    static func resolveSupportDirectory(home: URL, environment: [String: String]) -> URL {
+        if let env = environment["HT_HOME"], !env.isEmpty {
             return URL(fileURLWithPath: env, isDirectory: true)
         }
-        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".hyperterm", isDirectory: true)
+        let current = home.appendingPathComponent(directoryName, isDirectory: true)
+        let legacy = home.appendingPathComponent(legacyDirectoryName, isDirectory: true)
+        let fm = FileManager.default
+        if fm.fileExists(atPath: current.path) { return current }
+        let isSymlink = (try? fm.attributesOfItem(atPath: legacy.path)[.type] as? FileAttributeType) == .typeSymbolicLink
+        if !isSymlink, fm.fileExists(atPath: legacy.path) { return legacy }
+        return current
     }
 
     /// $HT_SOCKET wins so sessions always talk to the app instance that spawned them.

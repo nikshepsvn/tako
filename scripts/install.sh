@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 xcodegen generate >/dev/null
 # A pipe would hide xcodebuild's exit status from set -e, so keep the log in a file and check it.
 BUILD_LOG=$(mktemp)
-if ! xcodebuild -project Hyperterm.xcodeproj -scheme Hyperterm -configuration Release \
+if ! xcodebuild -project Tako.xcodeproj -scheme Tako -configuration Release \
   -derivedDataPath build/DerivedData build >"$BUILD_LOG" 2>&1; then
   grep -E "error:|BUILD (SUCCEEDED|FAILED)" "$BUILD_LOG" | sort -u || true
   rm -f "$BUILD_LOG"
