@@ -863,7 +863,7 @@ private struct WindowControls: View {
             TakoMemoryChip(steward: .shared)
             let waiting = store.attentionCount
             if waiting > 0 {
-                WaitingBadge(count: waiting, labels: store.waitingSessions.map(\.label), action: store.selectNextNeedingAttention)
+                WaitingBadge(count: waiting, labels: store.waitingSessions.map(\.label), store: store)
             }
             Menu {
                 Button("New Terminal…", action: actions.newSession)
@@ -952,12 +952,14 @@ private struct TakoMemoryChip: View {
     }
 }
 
-/// Shown only while sessions need you; takes you to the one that has waited longest.
+/// Shown only while sessions need you. Opens standup: every agent, what needs you first, each
+/// row a way to it. ⌘J still goes straight to the one that has waited longest.
 private struct WaitingBadge: View {
     let count: Int
     /// Who is waiting, longest first: the coalesced banner's names, kept on screen.
     var labels: [String] = []
-    let action: () -> Void
+    let store: SessionStore
+    @State private var showsStandup = false
 
     private var who: String {
         guard !labels.isEmpty else { return "" }
@@ -966,7 +968,7 @@ private struct WaitingBadge: View {
     }
 
     var body: some View {
-        Button(action: action) {
+        Button { showsStandup.toggle() } label: {
             HStack(spacing: Space.xs) {
                 Circle().fill(Palette.attention).frame(width: 6, height: 6)
                 Text(String(count)).monospacedDigit()
@@ -978,8 +980,12 @@ private struct WaitingBadge: View {
             .background(Palette.attention.opacity(0.12), in: Capsule())
         }
         .buttonStyle(.plain)
-        .help((count == 1 ? "1 needs you" : "\(count) need you") + " · go to the one that has waited longest (⌘J)" + who)
+        .help((count == 1 ? "1 needs you" : "\(count) need you") + " · standup of every agent (⌥⌘J); ⌘J goes to the one that has waited longest" + who)
         .accessibilityLabel(count == 1 ? "1 session needs you" : "\(count) sessions need you")
+        .accessibilityHint("Opens standup")
+        .popover(isPresented: $showsStandup, arrowEdge: .top) {
+            StandupView(store: store) { showsStandup = false }
+        }
     }
 }
 

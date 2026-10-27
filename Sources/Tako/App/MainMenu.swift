@@ -125,6 +125,7 @@ enum MainMenu {
         let menu = NSMenu(title: "Go")
         menu.addItem(item("Go to Terminal…", #selector(AppDelegate.showSwitcher(_:)), "p", target: target))
         menu.addItem(item("Next Waiting on You", #selector(AppDelegate.nextWaiting(_:)), "j", target: target))
+        menu.addItem(item("Standup", #selector(AppDelegate.showStandup(_:)), "j", [.command, .option], target: target))
         menu.addItem(item("Allow Next Request", #selector(AppDelegate.allowNext(_:)), "y", [.command, .option], target: target))
         menu.addItem(item("Deny Next Request", #selector(AppDelegate.denyNext(_:)), "n", [.command, .option], target: target))
         menu.addItem(item("Next Terminal", #selector(AppDelegate.nextSession(_:)), "]", target: target))

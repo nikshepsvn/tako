@@ -434,6 +434,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let session = store.selected { windowController?.showInspector(for: session) }
     }
     @objc func showSwitcher(_ sender: Any?) { windowController?.toggleSwitcher() }
+    @objc func showStandup(_ sender: Any?) { windowController?.toggleStandup() }
     @objc func layoutFocus(_ sender: Any?) { store.setLayout(.focus) }
     @objc func layoutSplit(_ sender: Any?) { store.setLayout(.split) }
     @objc func layoutGrid(_ sender: Any?) { store.setLayout(.grid) }

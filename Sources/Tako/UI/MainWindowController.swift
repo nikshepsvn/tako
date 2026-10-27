@@ -417,6 +417,35 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         switcher = panel
     }
 
+    // MARK: - Standup
+
+    private var standup: SwitcherPanel?
+
+    /// Standup from the menu, ⌘P or ⌥⌘J: the same card the waiting badge opens, floating at the
+    /// top of the window like the switcher, since the badge isn't there when nothing waits.
+    func toggleStandup() {
+        if let standup, standup.isVisible { standup.close(); return }
+        guard let window else { return }
+        let panel = SwitcherPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.level = .floating
+        panel.appearance = NSAppearance(named: .darkAqua)
+        let view = StandupView(store: store, dismiss: { [weak panel] in panel?.close() })
+            .floatingSurface(fallback: Tone.deep)
+            .clipShape(RoundedRectangle(cornerRadius: Radius.pane, style: .continuous))
+        let host = NSHostingView(rootView: view)
+        host.frame.size = host.fittingSize
+        panel.contentView = host
+        panel.setContentSize(host.fittingSize)
+        let frame = window.frame
+        panel.setFrameTopLeftPoint(NSPoint(x: frame.midX - host.fittingSize.width / 2, y: frame.maxY - 110))
+        window.addChildWindow(panel, ordered: .above)
+        panel.makeKeyAndOrderFront(nil)
+        standup = panel
+    }
+
     // MARK: - Mention picker
 
     private var mentionPicker: SwitcherPanel?

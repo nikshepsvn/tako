@@ -22,17 +22,9 @@ extension SessionStore {
         let agents = orderedSessions.filter { session in
             !session.isSumi && session.kind != .browser && (wanted?.contains(session.id) ?? true)
         }
-        let probes = agents.filter(\.kind.isAgent).map { (id: $0.id, path: $0.spec.workPath, base: $0.spec.baseBranch) }
+        let probes: [GitProbe] = agents.filter(\.kind.isAgent).map { (id: $0.id, path: $0.spec.workPath, base: $0.spec.baseBranch) }
         DispatchQueue.global(qos: .userInitiated).async {
-            var git: [UUID: (stat: DiffStat?, dirty: Int?)] = [:]
-            let lock = NSLock()
-            DispatchQueue.concurrentPerform(iterations: probes.count) { index in
-                let probe = probes[index]
-                let status = Git.run(["status", "--porcelain"], at: probe.path)
-                let result = (Review.diffStat(at: probe.path, base: probe.base),
-                              status.map { $0.split(separator: "\n").count })
-                lock.lock(); git[probe.id] = result; lock.unlock()
-            }
+            let git = Self.probeGit(probes)
             var briefing: String?
             if let since {
                 if let start = start.flatMap({ $0 }), let live {
@@ -48,6 +40,23 @@ extension SessionStore {
                 }
             }
         }
+    }
+
+    typealias GitProbe = (id: UUID, path: String, base: String?)
+
+    /// Each agent's diff against its base and its uncommitted file count, read fresh and in
+    /// parallel. Blocking: call it off the main thread.
+    nonisolated static func probeGit(_ probes: [GitProbe]) -> [UUID: (stat: DiffStat?, dirty: Int?)] {
+        var git: [UUID: (stat: DiffStat?, dirty: Int?)] = [:]
+        let lock = NSLock()
+        DispatchQueue.concurrentPerform(iterations: probes.count) { index in
+            let probe = probes[index]
+            let status = Git.run(["status", "--porcelain"], at: probe.path)
+            let result = (Review.diffStat(at: probe.path, base: probe.base),
+                          status.map { $0.split(separator: "\n").count })
+            lock.lock(); git[probe.id] = result; lock.unlock()
+        }
+        return git
     }
 
     func describeStandup(_ agents: [TerminalSession], git: [UUID: (stat: DiffStat?, dirty: Int?)], now: Date) -> String {
