@@ -141,6 +141,7 @@ public final class CefChromeBrowser {
         chrome.viewDelegate = viewDelegate
         // cef_browser_view_create consumes our +1 client and +1 delegate refs
         // and returns a +1 browser view that `chrome` owns.
+        CefRuntime.shared.noteBrowserCreationRequested()
         chrome.rawBrowserView = CefStringUtil.withCefString(url.absoluteString) { cefURL in
             cef_browser_view_create(clientPointer, cefURL, &settings, nil, nil, viewDelegate.makeStruct())
         }

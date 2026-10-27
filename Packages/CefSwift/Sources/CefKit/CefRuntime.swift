@@ -191,6 +191,8 @@ public final class CefRuntime {
         self.configuration = configuration
         messagePump = pump
         pump.start()
+        // Nothing is open yet; idle unless a browser is created within the grace period.
+        scheduleIdleCheck()
         CEFApplication.setTerminateHandler(cefTerminateHandler)
         isInitialized = true
 
@@ -231,6 +233,8 @@ public final class CefRuntime {
     /// be closed. Call once, at process exit.
     public func shutdown() {
         guard isInitialized else { return }
+        idleCheck?.cancel()
+        idleCheck = nil
         messagePump?.stop()
         messagePump = nil
         CEFApplication.setTerminateHandler(nil)
@@ -392,6 +396,47 @@ public final class CefRuntime {
     func registerBrowser(_ browser: CefBrowser) {
         guard browser.id >= 0 else { return }
         browsers[browser.id] = browser
+        updatePumpActivity()
+    }
+
+    // MARK: Idle pump (Tako patch)
+
+    /// How long the message pump keeps its 30 Hz poll after the last browser
+    /// closes (or after a creation request that never produced one) before
+    /// dropping to the idle tick.
+    public static var idleGrace: TimeInterval = 10
+
+    /// Whether the message pump is on its slow idle tick (no browsers).
+    public var isPumpIdle: Bool { messagePump?.isIdle ?? false }
+
+    private var idleCheck: DispatchWorkItem?
+
+    /// A browser is about to be created: poll at full rate until it exists.
+    func noteBrowserCreationRequested() {
+        messagePump?.setIdle(false)
+        scheduleIdleCheck()
+    }
+
+    private func updatePumpActivity() {
+        if browsers.isEmpty {
+            scheduleIdleCheck()
+        } else {
+            idleCheck?.cancel()
+            idleCheck = nil
+            messagePump?.setIdle(false)
+        }
+    }
+
+    private func scheduleIdleCheck() {
+        idleCheck?.cancel()
+        let check = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.browsers.isEmpty else { return }
+                self.messagePump?.setIdle(true)
+            }
+        }
+        idleCheck = check
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.idleGrace, execute: check)
     }
 
     /// All live browsers registered with the runtime. Used by ``CefBridge``
@@ -400,6 +445,7 @@ public final class CefRuntime {
 
     func unregisterBrowser(id: Int32) {
         browsers[id] = nil
+        updatePumpActivity()
         if isTerminationRequested && browsers.isEmpty {
             // Re-enter terminate:; with no browsers left it now proceeds.
             NSApp.terminate(nil)

@@ -319,6 +319,7 @@ extension CefBrowser {
 
         let requestContext = options.profile?.makeRequestContext()
 
+        CefRuntime.shared.noteBrowserCreationRequested()
         let rawBrowser = CefStringUtil.withCefString(url.absoluteString) { cefURL in
             cef_browser_host_create_browser_sync(&windowInfo, clientPointer, cefURL, &browserSettings, nil, requestContext)
         }
@@ -404,6 +405,7 @@ extension CefBrowser {
         client.attach(browser)
         client.pendingOSRBrowser = browser
 
+        CefRuntime.shared.noteBrowserCreationRequested()
         _ = CefStringUtil.withCefString(url.absoluteString) { cefURL in
             cef_browser_host_create_browser(&windowInfo, clientPointer, cefURL, &browserSettings, nil, requestContext)
         }
