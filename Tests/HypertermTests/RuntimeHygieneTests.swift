@@ -143,4 +143,31 @@ final class RuntimeHygieneTests: XCTestCase {
         _ = ledger.conclude([], labels: [], addresses: [])
         XCTAssertTrue(ledger.pages.isEmpty)
     }
+
+    // MARK: - Chromium profile
+
+    @MainActor
+    func testChromiumCapsDiskCacheAndSkipsComponentUpdates() throws {
+        let switches = AgentBrowser.chromiumSwitches
+        let cache = try XCTUnwrap(switches["disk-cache-size"] ?? nil).flatMap(Int.init)
+        XCTAssertEqual(cache, 96 * 1024 * 1024)
+        XCTAssertTrue(switches.keys.contains("disable-component-update"))
+        XCTAssertEqual(switches["renderer-process-limit"], "6")
+    }
+
+    @MainActor
+    func testComponentPruneKeepsLoginsAndCookies() throws {
+        let profile = try tempDir()
+        let fm = FileManager.default
+        for dir in ["component_crx_cache/abc", "Default/Network", "Default/Local Storage"] {
+            try fm.createDirectory(at: profile.appendingPathComponent(dir), withIntermediateDirectories: true)
+        }
+        try Data("c".utf8).write(to: profile.appendingPathComponent("Default/Network/Cookies"))
+        try Data("l".utf8).write(to: profile.appendingPathComponent("Default/Login Data"))
+        AgentBrowser.pruneComponentDownloads(in: profile)
+        XCTAssertFalse(fm.fileExists(atPath: profile.appendingPathComponent("component_crx_cache").path))
+        XCTAssertTrue(fm.fileExists(atPath: profile.appendingPathComponent("Default/Network/Cookies").path))
+        XCTAssertTrue(fm.fileExists(atPath: profile.appendingPathComponent("Default/Login Data").path))
+        XCTAssertTrue(fm.fileExists(atPath: profile.appendingPathComponent("Default/Local Storage").path))
+    }
 }
