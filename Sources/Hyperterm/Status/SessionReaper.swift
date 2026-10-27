@@ -126,6 +126,33 @@ enum SessionReaper {
         _ = waitUntilGone(processes, timeout: 0.2)
     }
 
+    /// Quitting: gathers every process the sessions started (`take` hands over one session's,
+    /// as `ProcessInspector.takeProcesses` does) for at most `collectFor`, then stops them all
+    /// and waits for them. Without this they'd outlive Tako under launchd until the next launch
+    /// swept them, and an agent killed then can't release its worktree lock cleanly.
+    static func stopAllForQuit(sessions: [String], collectFor: TimeInterval = 0.5, grace: TimeInterval = 1.5,
+                               take: (String, @escaping @Sendable ([TrackedProcess]) -> Void) -> Void) {
+        guard !sessions.isEmpty else { return }
+        let collected = Collected()
+        let group = DispatchGroup()
+        for session in sessions {
+            group.enter()
+            take(session) { processes in
+                collected.add(processes)
+                group.leave()
+            }
+        }
+        _ = group.wait(timeout: .now() + collectFor)
+        stopAndWait(collected.processes, grace: grace)
+    }
+
+    private final class Collected: @unchecked Sendable {
+        private let lock = NSLock()
+        private var all: [TrackedProcess] = []
+        func add(_ processes: [TrackedProcess]) { lock.lock(); all += processes; lock.unlock() }
+        var processes: [TrackedProcess] { lock.lock(); defer { lock.unlock() }; return Array(Set(all)) }
+    }
+
     /// The same process (pid and start time) is still running.
     static func isRunning(_ process: TrackedProcess) -> Bool {
         facts(process.pid)?.start == process.start

@@ -130,6 +130,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.flushPersist()
         controlServer?.stop()
         hookServer?.stop()
+        // Agents, shells and servers stop with Tako; agents resume at the next launch. A
+        // detached terminal is only a window of its own, so it stops too.
+        let sessions = store.sessions.filter { $0.kind != .browser }.map(\.id.uuidString)
+        let inspector = self.inspector
+        SessionReaper.stopAllForQuit(sessions: sessions) { inspector.takeProcesses(ofSession: $0, completion: $1) }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

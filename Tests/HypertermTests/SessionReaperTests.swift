@@ -198,6 +198,17 @@ final class SessionReaperTests: XCTestCase {
         XCTAssertTrue(pids.allSatisfy { SessionReaper.facts($0) == nil })
     }
 
+    /// Quitting stops every session's processes before Tako exits.
+    func testQuitStopsEverySessionsProcesses() throws {
+        let first = try spawnOrphans(), second = try spawnOrphans(script: "sleep 302 & echo $! > \"$0\"", count: 1)
+        defer { (first + second).forEach { kill($0, SIGKILL) } }
+        let bySession = ["a": tracked(first), "b": tracked(second)]
+        SessionReaper.stopAllForQuit(sessions: ["a", "b", "c"], grace: 0.3) { session, completion in
+            DispatchQueue.global().async { completion(bySession[session] ?? []) }
+        }
+        XCTAssertTrue((first + second).allSatisfy { SessionReaper.facts($0) == nil })
+    }
+
     /// Sessions restore only once what the last run left has gone.
     func testSweepCompletesAfterLeftoversAreGone() throws {
         let pids = try spawnOrphans()
