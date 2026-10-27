@@ -537,7 +537,7 @@ final class TerminalSession: ObservableObject, Identifiable {
     /// Called on each poll: delivers queued messages once the agent is free.
     func retryPendingMessages() {
         guard !queue.isEmpty, kind.isAgent else { return }
-        expireQueued()
+        noticeStaleQueued()
         if isAsleep { store?.wake(self); return }
         guard atRest, !isWaking else { return }
         flushPendingMessages()
@@ -754,9 +754,9 @@ final class TerminalSession: ObservableObject, Identifiable {
         land(queue.remove(at: index))
     }
 
-    /// How long a message may wait in the queue before it is given up on and its sender told,
-    /// rather than sitting there unseen while the sender believes it went through.
-    static let queuedMessageExpiry: TimeInterval = 60 * 60
+    /// How long a message may wait before its sender is told it is still queued. The message
+    /// itself is kept: the target may be in a long build, and dropping it would lose the work.
+    static let staleQueuedMessage: TimeInterval = 60 * 60
 
     @discardableResult
     private func enqueue(_ text: String, from sender: String?) -> QueuedMessage {
@@ -778,12 +778,13 @@ final class TerminalSession: ObservableObject, Identifiable {
         store?.messageOutcome(message, to: self, .delivered)
     }
 
-    func expireQueued(now: Date = Date()) {
-        let expired = queue.filter { now.timeIntervalSince($0.queuedAt) >= Self.queuedMessageExpiry }
-        guard !expired.isEmpty else { return }
-        queue.removeAll { now.timeIntervalSince($0.queuedAt) >= Self.queuedMessageExpiry }
-        let minutes = Int(Self.queuedMessageExpiry / 60)
-        expired.forEach { store?.messageOutcome($0, to: self, .expired("still queued after \(minutes) min")) }
+    func noticeStaleQueued(now: Date = Date()) {
+        let minutes = Int(Self.staleQueuedMessage / 60)
+        for index in queue.indices
+        where !queue[index].staleNoticed && now.timeIntervalSince(queue[index].queuedAt) >= Self.staleQueuedMessage {
+            queue[index].staleNoticed = true
+            store?.messageOutcome(queue[index], to: self, .stale("waiting over \(minutes) min"))
+        }
     }
 
     /// Everything still queued, for when the terminal closes.

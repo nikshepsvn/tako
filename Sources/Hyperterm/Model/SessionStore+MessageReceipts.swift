@@ -8,6 +8,8 @@ struct QueuedMessage: Equatable {
     /// The sending agent's label; nil for the user, Tako itself or a digest.
     let sender: String?
     let queuedAt: Date
+    /// Its sender has been told it is still waiting, so that is said once, not every poll.
+    var staleNoticed = false
 
     @MainActor private static var issued = 0
 
@@ -24,7 +26,8 @@ struct QueuedMessage: Equatable {
 enum MessageOutcome: Equatable {
     case delivered
     case dropped(String)
-    case expired(String)
+    /// Still waiting after a long time. It stays queued: a long build mustn't cost a message.
+    case stale(String)
 }
 
 /// Receipts gathered per sender, so a burst of deliveries is one line, not one turn each.
@@ -44,7 +47,7 @@ extension SessionStore {
             switch outcome {
             case .delivered: return ("delivered", nil)
             case .dropped(let why): return ("dropped", why)
-            case .expired(let why): return ("expired", why)
+            case .stale(let why): return ("still queued", why)
             }
         }()
         EventLog.record("message", session: target.label, "\(message.id) \(result)" + (why.map { ": " + $0 } ?? ""),
@@ -81,7 +84,9 @@ extension SessionStore {
         switch outcome {
         case .delivered:
             return "your message \(message.id) reached @\(target)\(after)"
-        case .dropped(let why), .expired(let why):
+        case .stale(let why):
+            return "your message \(message.id) to @\(target) is still queued (\(why)); it lands when @\(target) is free, so only resend if your plans changed"
+        case .dropped(let why):
             return "your message \(message.id) to @\(target) was NOT delivered (\(why)); resend it if it still matters: \"\(String(message.text.prefix(80)))\""
         }
     }

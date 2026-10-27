@@ -62,16 +62,19 @@ final class MessageReceiptTests: XCTestCase {
         XCTAssertEqual(receipt.components(separatedBy: "was NOT delivered (@api was closed)").count, 3, receipt)
     }
 
-    func testMessagesStillQueuedAfterAnHourExpire() {
+    func testMessagesStillQueuedAfterAnHourStayQueuedAndTheSenderIsToldOnce() {
         let api = agent("api", state: .needsInput("Allow Bash?")), web = agent("web", state: .needsInput("Allow Edit?"))
         let store = SessionStore(previewSessions: [api, web], previewLayout: .grid)
         api.store = store
         _ = api.deliver("Message from @web: one", from: "web")
         XCTAssertEqual(api.queue.count, 1)
-        api.expireQueued(now: Date().addingTimeInterval(TerminalSession.queuedMessageExpiry - 60))
+        api.noticeStaleQueued(now: Date().addingTimeInterval(TerminalSession.staleQueuedMessage - 60))
+        XCTAssertNil(store.messageReceipts.pending["web"])
+        let late = Date().addingTimeInterval(TerminalSession.staleQueuedMessage + 1)
+        api.noticeStaleQueued(now: late)
+        api.noticeStaleQueued(now: late.addingTimeInterval(60))
         XCTAssertEqual(api.queue.count, 1)
-        api.expireQueued(now: Date().addingTimeInterval(TerminalSession.queuedMessageExpiry + 1))
-        XCTAssertTrue(api.queue.isEmpty)
-        XCTAssertTrue(store.messageReceipts.pending["web"]?.first?.contains("still queued after 60 min") == true)
+        XCTAssertEqual(store.messageReceipts.pending["web"]?.count, 1)
+        XCTAssertTrue(store.messageReceipts.pending["web"]?.first?.contains("is still queued (waiting over 60 min)") == true)
     }
 }
