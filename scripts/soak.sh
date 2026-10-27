@@ -62,7 +62,9 @@ repo() {  # a small git repo for an agent to edit, so checkpoints and reviews ha
     && git add -A && git -c user.email=soak@tako -c user.name=soak commit -qm init)
   print $dir
 }
-ht() { "$HT" "$@" >/dev/null 2>>"$OUT/ht-errors.log"; }
+# A hung app must not hang the soak: every call gets 20 s, and a stall is logged.
+timed() { perl -e 'alarm 20; exec @ARGV' "$@"; }
+ht() { timed "$HT" "$@" >/dev/null 2>>"$OUT/ht-errors.log" || log "ht $1 failed or timed out"; }
 
 # A file of terminal output for shells to print over and over.
 for i in {1..4000}; do print "line $i $(head -c 90 /dev/urandom | base64)"; done > "$WORK/noise.txt"
@@ -79,7 +81,7 @@ sample() {  # dirty MB per footprint category; "scrollback" is libghostty's page
     / IOAccelerator \(graphics\)$/ { gpu = mb($1, $2) }
     / MALLOC_SMALL$| MALLOC_TINY$| MALLOC_MEDIUM$| MALLOC_LARGE$| MALLOC_NANO$/ { heap += mb($1, $2) }
     END { printf "%d,%d,%d,%d,%d", total, pages, surf, gpu, heap }')
-  local count=$("$HT" ls --json 2>/dev/null | grep -c '"label"')
+  local count=$(timed "$HT" ls --json 2>/dev/null | grep -c '"label"')
   print "$minute,$row,$count" >> "$OUT/footprint.csv"
   log "t=${minute}m footprint,scrollback,iosurface,gpu,malloc MB = $row; sessions=$count"
 }
@@ -106,7 +108,7 @@ while :; do
   # Agents message each other; a busy one queues the message until its turn ends.
   for _ in 1 2 3; do
     from=$(( RANDOM % AGENTS + 1 )) to=$(( RANDOM % AGENTS + 1 ))
-    HT_SESSION_ID= "$HT" send "@a$to" "message from a$from: $(head -c 600 /dev/urandom | base64)" >/dev/null 2>&1
+    HT_SESSION_ID= timed "$HT" send "@a$to" "message from a$from: $(head -c 600 /dev/urandom | base64)" >/dev/null 2>&1
   done
   ht read "@a$(( RANDOM % AGENTS + 1 ))" -n 200
   ht status "@a1" "soak round $churn"
