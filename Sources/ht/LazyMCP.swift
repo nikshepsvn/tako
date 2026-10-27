@@ -154,12 +154,14 @@ private final class LazyProxy: @unchecked Sendable {
             signal(sig, SIG_IGN)
             let source = DispatchSource.makeSignalSource(signal: sig, queue: .global())
             source.setEventHandler { [self] in
-                withState { self.child }?.terminate()
+                if let process = withState({ self.child }) { ProcessGroup.terminate(leader: process.processIdentifier, grace: 1) }
                 exit(0)
             }
             source.resume()
             sources.append(source)
         }
+        // An agent killed outright never closes our stdin when a grandchild still holds it.
+        let watch = ParentWatch.start { [self] in shutDown(grace: 1) }
         let idle = DispatchSource.makeTimerSource(queue: .global())
         idle.schedule(deadline: .now() + 60, repeating: 60)
         idle.setEventHandler { [self] in stopIfIdle() }
@@ -168,12 +170,19 @@ private final class LazyProxy: @unchecked Sendable {
             handleAgentLine(line)
         }
         idle.cancel()
+        watch.cancel()
+        shutDown(grace: 3)
+    }
+
+    /// Closes the server's stdin and gives it `grace` to exit, then stops its whole process
+    /// group: npx's node server outlives npx otherwise.
+    private func shutDown(grace: TimeInterval) -> Never {
         let (process, input) = withState { (self.child, self.toChild) }
         try? input?.close()
         if let process {
-            let deadline = Date().addingTimeInterval(3)
+            let deadline = Date().addingTimeInterval(grace)
             while process.isRunning && Date() < deadline { usleep(50_000) }
-            if process.isRunning { process.terminate() }
+            ProcessGroup.terminate(leader: process.processIdentifier, grace: 1)
         }
         exit(0)
     }
@@ -338,7 +347,7 @@ private final class LazyProxy: @unchecked Sendable {
             return self.toChild
         }
         try? input?.close()
-        process.terminate()
+        ProcessGroup.terminateSoon(leader: process.processIdentifier, grace: 3)
         serverGone(process)
     }
 
