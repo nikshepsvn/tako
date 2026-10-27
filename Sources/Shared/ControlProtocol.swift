@@ -105,6 +105,10 @@ struct ControlRequest: Codable {
     var flag: Bool?
     /// For `changes` and `board`: files or globs, relative to the workspace root.
     var paths: [String]?
+    /// For `subscribe`: ids of the channel messages this poller has written to Claude since its
+    /// last poll. Sent, even empty, only by pollers that confirm; an older `ht` leaves it out
+    /// and its hand-off counts as delivery, as before.
+    var acks: [String]?
 }
 
 /// The most agents one start_agent call may start on the same task.
@@ -164,6 +168,8 @@ struct ControlResponse: Codable {
     var ok: Bool
     /// For `subscribe`: messages to push into the session as channel events.
     var messages: [String]?
+    /// For `subscribe`: each message's id, in order, for the poller to acknowledge.
+    var messageIDs: [String]?
     var error: String?
     var sessions: [SessionInfo]?
     var session: SessionInfo?

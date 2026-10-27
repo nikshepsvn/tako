@@ -165,7 +165,7 @@ struct ControlHandler {
             handleBrowser(request, reply: reply)
         case .subscribe:
             guard let agent = callerAgent, agent.kind == .claude else { reply(.success()); return }
-            store.subscribeChannel(agent, reply: reply)
+            store.subscribeChannel(agent, acks: request.acks, reply: reply)
         case .new where callerSumi != nil && (request.kind == SessionKind.claude.rawValue || request.kind == SessionKind.codex.rawValue):
             startAgentForSumi(request, reply: reply)
         case .close where callerSumi != nil:

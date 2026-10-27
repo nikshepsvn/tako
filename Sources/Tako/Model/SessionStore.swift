@@ -103,77 +103,24 @@ final class SessionStore: ObservableObject {
     /// The app-server request behind each session's held approval, so the terminal answering
     /// it clears Tako's.
     var codexHeldRequests: [UUID: (request: CodexAppServer.RequestID, approval: UUID)] = [:]
-    /// Channel delivery (opt-in): each Claude session's MCP server long-polls for messages.
-    private var channelWaiters: [UUID: ControlServer.Reply] = [:]
-    private var channelInbox: [UUID: [String]] = [:]
-    private var channelLastSeen: [UUID: Date] = [:]
+    /// Channel delivery (opt-in): each Claude session's MCP server long-polls for messages
+    /// (SessionStore+Channel). Touched on the main actor only.
+    var channelWaiters: [UUID: ControlServer.Reply] = [:]
+    var channelInbox: [UUID: [ChannelMessage]] = [:]
+    var channelLastSeen: [UUID: Date] = [:]
     /// Identifies the waiter a timeout belongs to, so an old timer can't end a newer long-poll.
-    private var channelWaiterTokens: [UUID: UUID] = [:]
+    var channelWaiterTokens: [UUID: UUID] = [:]
+    /// Sessions whose poller acknowledges what it wrote to Claude (an `ht` new enough to).
+    var channelConfirming: Set<UUID> = []
+    /// Handed to a confirming poller and not yet acknowledged, by message id.
+    var channelUnconfirmed: [String: (session: UUID, message: ChannelMessage)] = [:]
 
     nonisolated static var channelsEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: "channels") }
+        get { channelsEnabledOverride ?? UserDefaults.standard.bool(forKey: "channels") }
         set { UserDefaults.standard.set(newValue, forKey: "channels") }
     }
-
-    func subscribeChannel(_ session: TerminalSession, reply: @escaping ControlServer.Reply) {
-        channelLastSeen[session.id] = Date()
-        if let queued = channelInbox.removeValue(forKey: session.id), !queued.isEmpty {
-            var response = ControlResponse.success()
-            response.messages = queued
-            reply(response)
-            return
-        }
-        channelWaiters.removeValue(forKey: session.id)?(ControlResponse.success())
-        channelWaiters[session.id] = reply
-        let token = UUID()
-        channelWaiterTokens[session.id] = token
-        DispatchQueue.main.asyncAfter(deadline: .now() + 45) { [weak self] in
-            guard let self, self.channelWaiterTokens[session.id] == token,
-                  let waiting = self.channelWaiters.removeValue(forKey: session.id) else { return }
-            self.channelWaiterTokens[session.id] = nil
-            waiting(ControlResponse.success())
-        }
-    }
-
-    /// Forgets a session's channel: its MCP server is gone (closed or restarted). Returns the
-    /// messages it never picked up.
-    @discardableResult
-    func dropChannel(for session: TerminalSession) -> [String] {
-        channelWaiters.removeValue(forKey: session.id)?(ControlResponse.success())
-        channelWaiterTokens[session.id] = nil
-        channelLastSeen[session.id] = nil
-        return channelInbox.removeValue(forKey: session.id) ?? []
-    }
-
-    /// Pushes a message as a channel event when the session's channel is live. Returns false when
-    /// the session has no channel, so the caller types the message instead.
-    func pushViaChannel(_ text: String, to session: TerminalSession) -> Bool {
-        // A poller from before a restart, sleep or exit can look fresh for a minute while its
-        // socket is already gone: only a running agent's channel counts.
-        if case .exited = session.state { return false }
-        guard Self.channelsEnabled, session.kind == .claude, !session.isAsleep, session.state != .starting,
-              let seen = channelLastSeen[session.id], Date().timeIntervalSince(seen) < 60 else { return false }
-        // At rest, a channel event starts a turn of its own with no prompt hook to say whose it is.
-        if session.isSumi, session.state != .working { session.turnFromUser = false }
-        if let waiter = channelWaiters.removeValue(forKey: session.id) {
-            var response = ControlResponse.success()
-            response.messages = [text]
-            waiter(response)
-        } else {
-            channelInbox[session.id, default: []].append(text)
-            // A poller that died inside the freshness window never drains this: if the message is
-            // still waiting, call the channel dead and type it instead.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self, weak session] in
-                guard let self, let session, var inbox = self.channelInbox[session.id],
-                      let index = inbox.firstIndex(of: text) else { return }
-                inbox.remove(at: index)
-                self.channelInbox[session.id] = inbox.isEmpty ? nil : inbox
-                self.channelLastSeen[session.id] = nil
-                _ = session.deliver(text, from: nil)
-            }
-        }
-        return true
-    }
+    /// Tests turn channels on without writing the setting (the test host shares the app's defaults).
+    nonisolated(unsafe) static var channelsEnabledOverride: Bool?
     /// Shows an in-app confirmation; set by the window controller.
     var confirmHandler: ((String, String, @escaping (Bool) -> Void) -> Void)?
 

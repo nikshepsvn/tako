@@ -714,7 +714,8 @@ final class TerminalSession: ObservableObject, Identifiable {
         }
         if submit, store?.pushViaChannel(text, to: self) == true {
             if let sender { record(.message, "Message from @\(sender)") }
-            return "delivered to @\(label) (channel)"
+            // A confirming poller hasn't said it reached Claude yet; Tako types it if it doesn't.
+            return (store?.channelConfirms(self) == true ? "sent to @" : "delivered to @") + "\(label) (channel)"
         }
         if kind.isAgent && (state.needsAttention || dialogOnScreen || !inputIsEmpty) {
             return queuedReply(enqueue(text, from: sender), "is busy at a prompt; it gets the message as soon as that clears")
