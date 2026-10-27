@@ -102,7 +102,11 @@ final class HookServer: @unchecked Sendable {
     private func serve(_ client: Int32) {
         defer { close(client) }
         let outcome = Self.readRequest(client, deadline: clock_gettime_nsec_np(CLOCK_UPTIME_RAW) + connectionDeadline)
-        guard case .request(let request) = outcome else { return reply(client, status: outcome.status) }
+        guard case .request(let request) = outcome else {
+            // A dropped hook leaves a card's status stale; keep a trace of each one.
+            EventLog.record("hook", "answered \(outcome.status)", fields: ["outcome": "\(outcome)"])
+            return reply(client, status: outcome.status)
+        }
         guard let session = Self.authorizedSession(request) else { return reply(client, status: ReadOutcome.forbidden.status) }
         // Queued before the reply: Claude sends its next event only once this one is answered,
         // so the serial queue gets them in the order they were sent.

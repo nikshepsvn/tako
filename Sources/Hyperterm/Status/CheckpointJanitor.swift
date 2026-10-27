@@ -29,10 +29,10 @@ enum CheckpointJanitor {
         found.filter { !keep.contains($0.key) && now.timeIntervalSince($0.value) >= keepFor }.keys.sorted()
     }
 
-    /// Prunes stale sessions' checkpoints in each repository and notes them in hooks.log.
+    /// Prunes stale sessions' checkpoints in each repository and notes them in events.jsonl.
     /// Blocks; run it off the main thread.
     static func collect(roots: Set<String>, keep: Set<String>, now: Date = Date(),
-                        log: (String, String?) -> Void = { HookLog.append(source: "gc", sessionID: $1, payload: $0) }) {
+                        log: (String, String?) -> Void = { EventLog.record("gc", session: $1, $0) }) {
         for root in roots.sorted() {
             let format = "--format=%(refname)%09%(committerdate:unix)"
             guard let listing = Git.run(["for-each-ref", format, Checkpoints.namespace + "/"], at: root) else { continue }

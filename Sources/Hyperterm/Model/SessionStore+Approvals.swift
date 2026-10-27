@@ -25,6 +25,7 @@ extension SessionStore {
                                        suggestions: json["permission_suggestions"], reply: reply)
         if approvesInPhoneMode(session, approval) {
             reply(ControlResponse.success(text: decisionJSON(approval, .approve, reason: nil)))
+            logApproval(session, approval, outcome: "phone-mode")
             session.record(.approval, "Allowed \(summary) (Phone Mode)")
             return
         }
@@ -82,6 +83,7 @@ extension SessionStore {
         session.pendingPlan = nil
         learnAnswer(session, approval: approval, answer: answer)
         approval.reply(ControlResponse.success(text: decisionJSON(approval, answer, reason: reason)))
+        logApproval(session, approval, outcome: answer == .deny ? "denied" : answer == .always ? "always" : "approved")
         session.record(.approval, answer == .deny ? "Denied \(approval.summary)" : answer == .always ? "Always allowed \(approval.summary)" : "Allowed \(approval.summary)")
         session.apply(.userSubmitted, source: "approval", force: .working)
         notifier.clearApproval(session: session)
@@ -108,6 +110,7 @@ extension SessionStore {
         session.heldToolCall = nil
         session.pendingPlan = nil
         approval.reply(ControlResponse.success())
+        logApproval(session, approval, outcome: "released")
         notifier.clearApproval(session: session)
         holdNextApproval(for: session)
     }
@@ -116,6 +119,14 @@ extension SessionStore {
     func dropAllApprovals(for session: TerminalSession) {
         queuedApprovals.removeValue(forKey: session.id)?.forEach { $0.approval.reply(ControlResponse.success()) }
         dropApproval(for: session)
+    }
+
+    /// How each held request ended and how long it waited, in events.jsonl: the record of
+    /// what was approved on the user's behalf outlives the hook log.
+    private func logApproval(_ session: TerminalSession, _ approval: PendingApproval, outcome: String) {
+        let waited = (Date().timeIntervalSince(approval.createdAt) * 10).rounded() / 10
+        EventLog.record("approval", session: session.label, "\(outcome): \(approval.summary)",
+                        fields: ["tool": approval.toolName, "outcome": outcome, "waited_s": waited])
     }
 
     /// After a beat, so keys meant for the dialog just released land there first.

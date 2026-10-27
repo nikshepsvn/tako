@@ -39,7 +39,7 @@ enum WorktreeLedger {
 /// never one an open session or a running process uses, never one with uncommitted work or a
 /// detached HEAD, and only through `Review.archive`, which keeps the branch and never forces.
 /// Work that isn't in the base branch yet is kept in its folder for `keepFor` after the agent
-/// closed (the user may reopen it). Everything it does goes to hooks.log.
+/// closed (the user may reopen it). Everything it does goes to events.jsonl.
 enum WorktreeJanitor {
     static let queue = DispatchQueue(label: "dev.hyperterm.worktree-janitor", qos: .utility)
     static let keepFor: TimeInterval = 7 * 24 * 3600
@@ -176,7 +176,7 @@ enum WorktreeJanitor {
     /// worktrees that are gone.
     @discardableResult
     static func collect(records: [WorktreeRecord], known: Known, only: Set<String>? = nil, now: Date = Date(),
-                        log: (String, String?) -> Void = { HookLog.append(source: "gc", sessionID: $1, payload: $0) }) -> [WorktreeRecord] {
+                        log: (String, String?) -> Void = { EventLog.record("gc", session: $1, $0) }) -> [WorktreeRecord] {
         let recorded = Dictionary(records.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
         let candidates = Set(records.map(\.path)).union(known.closed.keys)
             .filter { isAgentWorktree($0) && (only?.contains($0) ?? true) }
