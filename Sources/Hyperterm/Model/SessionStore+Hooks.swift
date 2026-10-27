@@ -123,14 +123,15 @@ extension SessionStore {
         switch event {
         case "UserPromptSubmit":
             let prompt = json["prompt"] as? String
-            // Another agent's message isn't the user's turn: no checkpoint for it.
-            session.turnIsMessage = prompt.map(isAgentMessage) ?? false
+            // Another agent's message, or a wrapper the harness injected (a channel push, a task
+            // notification), isn't the user's turn: no checkpoint, and the card keeps its summary.
+            session.turnIsMessage = !(prompt.map(PromptOrigin.init) ?? .user).isUser
             // A turn already opened before the hooks could report it isn't opened twice.
             if !session.turnIsMessage && !session.turnOpenedByGuess { checkpoint(session, phase: .start, prompt: prompt ?? "Turn") }
             session.turnOpenedByGuess = false
             if let prompt {
                 if session.turnIsMessage {
-                    session.record(.message, summarize(prompt) ?? prompt)
+                    session.record(.message, summarize(PromptOrigin.describe(prompt)) ?? prompt)
                 } else {
                     session.summary = summarize(prompt).map { "› " + $0 }
                     session.record(.prompt, summarize(prompt, limit: 200) ?? prompt)
