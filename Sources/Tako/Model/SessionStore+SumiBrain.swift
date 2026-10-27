@@ -264,7 +264,8 @@ extension SessionStore {
             var spec = LaunchSpec(label: normalizeLabel(id + "-" + self.labelFromTask(task.title)), kind: kind, cwd: folder)
             spec.labelSource = .agent
             spec.options = AppSettings.defaultMode.map { AgentOptions(mode: $0) }
-            let child = await self.launch(spec, select: false, isolateIfPossible: true, task: brief)
+            let briefed = await self.withTeamBoard(brief, folder: folder)
+            let child = await self.launch(spec, select: false, isolateIfPossible: true, task: briefed)
             child.record(.note, "Started by Sumi's plan (\(id))")
             self.showOpenedBySumi([child])
             guard let index = self.sumiBrain.plan.tasks.firstIndex(where: { $0.id == id }) else { return }
