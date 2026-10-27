@@ -11,8 +11,37 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # libghostty is SDK-independent, and Zig 0.15 can't link against the macOS 26 SDK: build it
+  # once here with Xcode 16 and let every build job restore it. Built only when the build
+  # script changes; otherwise this job just confirms the cache is there.
+  ghosttykit:
+    name: libghostty
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache libghostty
+        id: ghostty
+        uses: actions/cache@v4
+        with:
+          path: |
+            GhosttyKit.xcframework
+            Resources/ghostty
+            Resources/terminfo
+          key: ghosttykit-${{ hashFiles('scripts/build-ghosttykit.sh') }}
+
+      - name: Build libghostty
+        if: steps.ghostty.outputs.cache-hit != 'true'
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)"
+          curl -fsSL https://ziglang.org/download/0.15.2/zig-aarch64-macos-0.15.2.tar.xz | tar xJ -C "$RUNNER_TEMP"
+          export PATH="$RUNNER_TEMP/zig-aarch64-macos-0.15.2:$PATH"
+          scripts/build-ghosttykit.sh
+
   build:
     name: build (${{ matrix.os }})
+    needs: ghosttykit
     strategy:
       fail-fast: false
       matrix:
@@ -35,29 +64,17 @@ jobs:
           if [ "${{ matrix.os }}" = "macos-26" ]; then xcodebuild -downloadComponent MetalToolchain || true; fi
 
       - name: Tools
-        run: |
-          brew install xcodegen
-          curl -fsSL https://ziglang.org/download/0.15.2/zig-aarch64-macos-0.15.2.tar.xz | tar xJ -C "$RUNNER_TEMP"
-          echo "$RUNNER_TEMP/zig-aarch64-macos-0.15.2" >> "$GITHUB_PATH"
+        run: brew install xcodegen
 
-      - name: Cache libghostty
-        id: ghostty
-        uses: actions/cache@v4
+      - name: Restore libghostty
+        uses: actions/cache/restore@v4
         with:
           path: |
             GhosttyKit.xcframework
             Resources/ghostty
             Resources/terminfo
           key: ghosttykit-${{ hashFiles('scripts/build-ghosttykit.sh') }}
-
-      - name: Build libghostty
-        if: steps.ghostty.outputs.cache-hit != 'true'
-        run: |
-          # Zig 0.15 can't link against the macOS 26 SDK yet; libghostty is SDK-independent, so
-          # build it with Xcode 16 wherever that's installed.
-          OLD=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1 || true)
-          if [ -n "$OLD" ]; then export DEVELOPER_DIR="$OLD/Contents/Developer"; fi
-          scripts/build-ghosttykit.sh
+          fail-on-cache-miss: true
 
       - name: Cache Chromium
         uses: actions/cache@v4
