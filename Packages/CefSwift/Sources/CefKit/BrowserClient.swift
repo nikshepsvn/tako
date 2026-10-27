@@ -70,6 +70,14 @@ final class BrowserClient {
         cefOwner(BrowserClient.self, cefSelf)
     }
 
+    /// The NSView CEF created for a windowed browser, if it has one.
+    nonisolated static func nativeView(of browser: UnsafeMutablePointer<cef_browser_t>?) -> NSView? {
+        guard let browser, let host = browser.pointee.get_host?(browser) else { return nil }
+        defer { cefRelease(UnsafeMutableRawPointer(host)) }
+        guard let handle = host.pointee.get_window_handle?(host) else { return nil }
+        return Unmanaged<NSView>.fromOpaque(handle).takeUnretainedValue()
+    }
+
     // MARK: Struct construction
 
     /// Builds the cef_client_t graph. The returned pointer carries one
@@ -96,8 +104,17 @@ final class BrowserClient {
             cefRelease(UnsafeMutableRawPointer(browser))
         }
         lifeSpan.pointee.do_close = { _, browser in
-            cefRelease(browser.map(UnsafeMutableRawPointer.init))
-            return 0  // proceed with the close
+            // Tako patch: a windowed browser lives in a view inside the app's own window.
+            // Returning false would make CEF send performClose: to that whole window, which
+            // the app refuses, leaving the browser half-closed forever (its page, renderer
+            // and the 30 Hz pump stay alive). Instead finish the close the documented way:
+            // tear down the browser's view, whose dealloc destroys the browser.
+            defer { cefRelease(browser.map(UnsafeMutableRawPointer.init)) }
+            guard let view = BrowserClient.nativeView(of: browser) else { return 0 }
+            DispatchQueue.main.async { [weak view] in
+                view?.removeFromSuperview()
+            }
+            return 1
         }
         lifeSpan.pointee.on_before_close = { handlerSelf, browser in
             cefRelease(browser.map(UnsafeMutableRawPointer.init))
