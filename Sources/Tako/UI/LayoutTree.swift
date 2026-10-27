@@ -158,7 +158,7 @@ struct LayoutTree: Equatable, Codable {
         return replacing(target.key, in: node) { LayoutNode.split(axis, [(1, $0), (1, .leaf(id))]) ?? $0 }
     }
 
-    private static func replacing(_ id: UUID, in node: LayoutNode, with make: (LayoutNode) -> LayoutNode) -> LayoutNode {
+    static func replacing(_ id: UUID, in node: LayoutNode, with make: (LayoutNode) -> LayoutNode) -> LayoutNode {
         switch node {
         case .leaf(let leaf): return leaf == id ? make(node) : node
         case .split(let axis, let weights, let children):
@@ -305,6 +305,143 @@ struct LayoutTree: Equatable, Codable {
         let tolerance = length > 0 ? 10 / length : 0
         for stop in [1.0 / 3, 0.5, 2.0 / 3] where abs(fraction - stop) < tolerance { return stop }
         return fraction
+    }
+}
+
+/// A side of a tile or of the canvas.
+enum LayoutEdge: String, Codable, CaseIterable {
+    case left, right, top, bottom
+
+    /// The split a tile placed on this side joins.
+    var axis: LayoutAxis { self == .left || self == .right ? .horizontal : .vertical }
+    /// Whether it lands before the other child. Vertical splits list the top child first.
+    var leads: Bool { self == .left || self == .top }
+}
+
+/// Where a tile dragged by its header lands.
+enum LayoutDrop: Equatable {
+    /// Trade places with this tile (dropping on its center).
+    case swap(UUID)
+    /// Split this tile and take the half on `edge`.
+    case beside(UUID, LayoutEdge)
+    /// A full-height column or full-width row along the canvas's edge.
+    case canvas(LayoutEdge)
+}
+
+extension LayoutTree {
+    /// How far from the canvas's edge the pointer counts as "the edge": wide enough to hit with a
+    /// flick, narrow enough that a tile's own edge zones stay reachable.
+    static let canvasEdgeBand: CGFloat = 28
+    /// The centered box of a target tile that means "swap", as a fraction of each side. Big
+    /// enough that the old drop-on-a-tile habit still swaps.
+    static let swapZone: CGFloat = 0.4
+
+    // MARK: Moving tiles
+
+    /// Splits `target` and puts `id` on its `edge` side. Refused (false, unchanged) when either
+    /// isn't a tile here, when they are the same tile, or when a tile would end up smaller than
+    /// `minTile` that wasn't already.
+    @discardableResult
+    mutating func move(_ id: UUID, beside target: UUID, edge: LayoutEdge, in bounds: CGRect) -> Bool {
+        guard id != target, let root, root.contains(id), root.contains(target),
+              let rest = Self.removing(id, from: root) else { return false }
+        return adopt(Self.inserting(id, beside: target, edge: edge, into: rest), in: bounds)
+    }
+
+    /// Takes `id` out and lays it along the canvas's `edge` as a full column or row, as wide as
+    /// the columns (or rows) already along that axis.
+    @discardableResult
+    mutating func move(_ id: UUID, toCanvas edge: LayoutEdge, in bounds: CGRect) -> Bool {
+        guard let root, root.contains(id), root.leaves.count > 1, let rest = Self.removing(id, from: root) else { return false }
+        return adopt(Self.inserting(id, atEdge: edge, of: rest), in: bounds)
+    }
+
+    /// Applies a drop. Swaps are always allowed: sizes stay where they are.
+    @discardableResult
+    mutating func apply(_ drop: LayoutDrop, moving id: UUID, in bounds: CGRect) -> Bool {
+        switch drop {
+        case .swap(let target):
+            guard target != id, root?.contains(target) == true, root?.contains(id) == true else { return false }
+            // As before snap zones: a swap keeps the tree's even/customized state.
+            swap(id, target)
+            return true
+        case .beside(let target, let edge): return move(id, beside: target, edge: edge, in: bounds)
+        case .canvas(let edge): return move(id, toCanvas: edge, in: bounds)
+        }
+    }
+
+    /// What applying `drop` would give, without committing it: the snap preview's frame.
+    func preview(_ drop: LayoutDrop, moving id: UUID, in bounds: CGRect) -> CGRect? {
+        var trial = self
+        guard trial.apply(drop, moving: id, in: bounds) else { return nil }
+        return trial.frames(in: bounds)[id]
+    }
+
+    /// Commits `next` when it keeps every tile usable.
+    private mutating func adopt(_ next: LayoutNode, in bounds: CGRect) -> Bool {
+        let candidate = LayoutTree(root: next, customized: true)
+        guard candidate.leaves.count == leaves.count,
+              candidate.undersized(in: bounds) <= undersized(in: bounds) else { return false }
+        self = candidate
+        return true
+    }
+
+    /// Tiles below the minimum size. A cramped window may already have some; a move may not add any.
+    func undersized(in bounds: CGRect) -> Int {
+        frames(in: bounds).values.filter {
+            $0.width + 0.5 < Self.minTile.width || $0.height + 0.5 < Self.minTile.height
+        }.count
+    }
+
+    static func inserting(_ id: UUID, beside target: UUID, edge: LayoutEdge, into node: LayoutNode) -> LayoutNode {
+        replacing(target, in: node) { existing in
+            let pair: [(weight: Double, node: LayoutNode)] = edge.leads
+                ? [(1, .leaf(id)), (1, existing)] : [(1, existing), (1, .leaf(id))]
+            return LayoutNode.split(edge.axis, pair) ?? existing
+        }
+    }
+
+    static func inserting(_ id: UUID, atEdge edge: LayoutEdge, of node: LayoutNode) -> LayoutNode {
+        // Weighted against the children already along that axis, so the new column matches them.
+        var share = 1.0
+        if case .split(let axis, _, let children) = node, axis == edge.axis { share = Double(children.count) }
+        let pairs: [(weight: Double, node: LayoutNode)] = edge.leads
+            ? [(1, .leaf(id)), (share, node)] : [(share, node), (1, .leaf(id))]
+        return LayoutNode.split(edge.axis, pairs) ?? node
+    }
+
+    // MARK: Drop zones
+
+    /// The drop under `point` while `id` is dragged: a canvas edge band first, then the zone of
+    /// the tile under the pointer. Nil over the dragged tile's own spot or outside the canvas.
+    func drop(at point: CGPoint, dragging id: UUID, in bounds: CGRect) -> LayoutDrop? {
+        guard bounds.contains(point) else { return nil }
+        let band = min(Self.canvasEdgeBand, bounds.width / 4, bounds.height / 4)
+        let distances: [(LayoutEdge, CGFloat)] = [
+            (.left, point.x - bounds.minX), (.right, bounds.maxX - point.x),
+            (.top, bounds.maxY - point.y), (.bottom, point.y - bounds.minY),
+        ]
+        if let nearest = distances.min(by: { $0.1 < $1.1 }), nearest.1 < band, leaves.count > 1 {
+            return .canvas(nearest.0)
+        }
+        guard let target = frames(in: bounds).first(where: { $0.key != id && $0.value.contains(point) }) else { return nil }
+        return Self.tileDrop(target.key, point: point, frame: target.value)
+    }
+
+    /// Center swaps; elsewhere the nearest side, measured relative to the tile's size so tall and
+    /// wide tiles feel the same.
+    static func tileDrop(_ target: UUID, point: CGPoint, frame: CGRect) -> LayoutDrop {
+        let x = (point.x - frame.minX) / max(frame.width, 1)
+        let y = (frame.maxY - point.y) / max(frame.height, 1)
+        if abs(x - 0.5) < swapZone / 2, abs(y - 0.5) < swapZone / 2 { return .swap(target) }
+        return .beside(target, zone(of: point, in: frame))
+    }
+
+    static func zone(of point: CGPoint, in frame: CGRect) -> LayoutEdge {
+        let x = (point.x - frame.minX) / max(frame.width, 1)
+        let y = (frame.maxY - point.y) / max(frame.height, 1)
+        let sides: [(LayoutEdge, CGFloat)] = [(.left, x), (.right, 1 - x), (.top, y), (.bottom, 1 - y)]
+        return sides.min(by: { $0.1 < $1.1 })!.0
     }
 }
 
