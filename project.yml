@@ -7,10 +7,10 @@ options:
     macOS: "15.0"
   createIntermediateGroups: true
 packages:
-  # Embedded Chromium for the browser pane. Pinned to a tested commit (CEF 154).
+  # Embedded Chromium for the browser pane: CefSwift at a tested commit (CEF 154), vendored
+  # so Tako can patch its message pump (see Packages/CefSwift/TAKO-PATCHES.md).
   CefSwift:
-    url: https://github.com/Rajaniraiyn/CefSwift
-    revision: 59cad64e124b8efdb6b2ee811963097bb6e689e8
+    path: Packages/CefSwift
 configFiles:
   Debug: Signing.xcconfig
   Release: Signing.xcconfig
