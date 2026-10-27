@@ -9,8 +9,8 @@ if [ ! -f Signing.local.xcconfig ] && [ -f "$MAIN/Signing.local.xcconfig" ]; the
   cp "$MAIN/Signing.local.xcconfig" .
 fi
 xcodegen generate >/dev/null
-xcodebuild -project Hyperterm.xcodeproj -scheme Hyperterm -configuration "${CONFIG:-Debug}" \
-  -derivedDataPath build/DerivedData build 2>&1 | grep -E "error:|warning: .*(Hyperterm|Tako)|BUILD (SUCCEEDED|FAILED)" | sort -u
+xcodebuild -project Tako.xcodeproj -scheme Tako -configuration "${CONFIG:-Debug}" \
+  -derivedDataPath build/DerivedData build 2>&1 | grep -E "error:|warning: .*Tako|BUILD (SUCCEEDED|FAILED)" | sort -u
 APP="$PWD/build/DerivedData/Build/Products/${CONFIG:-Debug}/Tako.app"
 PID=$(pgrep -f "$APP/Contents/MacOS/Tako" || true)
 if [ -n "$PID" ]; then kill "$PID"; sleep 1.5; fi

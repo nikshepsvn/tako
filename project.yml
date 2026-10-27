@@ -1,5 +1,7 @@
-name: Hyperterm
+name: Tako
 options:
+  # Bundle IDs keep the old dev.hyperterm prefix on purpose: changing them would drop the user's
+  # UserDefaults, notification permission and folder access (TCC), which are keyed on the ID.
   bundleIdPrefix: dev.hyperterm
   deploymentTarget:
     macOS: "15.0"
@@ -22,11 +24,11 @@ settings:
     ENABLE_HARDENED_RUNTIME: NO
     DEAD_CODE_STRIPPING: YES
 targets:
-  Hyperterm:
+  Tako:
     type: application
     platform: macOS
     sources:
-      - path: Sources/Hyperterm
+      - path: Sources/Tako
       - path: Sources/Shared
       - path: Resources/ghostty
         type: folder
@@ -53,13 +55,13 @@ targets:
       - target: ht
         embed: false
         link: false
-      - target: HypertermHelper
+      - target: TakoHelper
         embed: false
         link: false
       - package: CefSwift
         product: CefSwiftUI
     info:
-      path: Sources/Hyperterm/App/Info.plist
+      path: Sources/Tako/App/Info.plist
       properties:
         CFBundleName: Tako
         CFBundleDisplayName: Tako
@@ -80,9 +82,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.hyperterm.app
-        # The product is Tako; the Swift module keeps its original name.
         PRODUCT_NAME: Tako
-        PRODUCT_MODULE_NAME: Hyperterm
         OTHER_LDFLAGS: "-lc++"
       # The debug build runs next to the installed app, so it keeps its own preferences.
       configs:
@@ -100,7 +100,7 @@ targets:
         script: |
           # The tracked config files are the source of truth; Resources/ghostty is only refreshed
           # when libghostty is rebuilt, so copy them into the bundle on every build.
-          cp -f "$SRCROOT/Resources/hyperterm-style.conf" "$SRCROOT/Resources/hyperterm-defaults.conf" \
+          cp -f "$SRCROOT/Resources/tako-style.conf" "$SRCROOT/Resources/tako-defaults.conf" \
             "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Resources/ghostty/"
         basedOnDependencyAnalysis: false
       - name: Embed Chromium
@@ -108,17 +108,17 @@ targets:
           "$SRCROOT/scripts/embed-cef.sh"
         basedOnDependencyAnalysis: false
   # Chromium's renderer/GPU/utility processes; embed-cef.sh copies it into five helper apps.
-  HypertermHelper:
+  TakoHelper:
     type: tool
     platform: macOS
     sources:
-      - path: Sources/HypertermHelper
+      - path: Sources/TakoHelper
     dependencies:
       - package: CefSwift
         product: CefKit
     settings:
       base:
-        PRODUCT_NAME: HypertermHelper
+        PRODUCT_NAME: TakoHelper
   ht:
     type: tool
     platform: macOS
@@ -128,24 +128,24 @@ targets:
     settings:
       base:
         PRODUCT_NAME: ht
-  HypertermTests:
+  TakoTests:
     type: bundle.unit-test
     platform: macOS
     sources:
-      - path: Tests/HypertermTests
+      - path: Tests/TakoTests
     dependencies:
-      - target: Hyperterm
+      - target: Tako
     settings:
       base:
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Tako.app/Contents/MacOS/Tako"
         BUNDLE_LOADER: "$(TEST_HOST)"
         GENERATE_INFOPLIST_FILE: YES
 schemes:
-  Hyperterm:
+  Tako:
     build:
       targets:
-        Hyperterm: all
+        Tako: all
         ht: all
     test:
       targets:
-        - HypertermTests
+        - TakoTests

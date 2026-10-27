@@ -4,9 +4,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 pattern='\.system\(size: *[0-9]|cornerRadius: *[0-9]|Color\(red:|srgbRed:|\.font\(\.(caption2?|callout|footnote|body|headline|subheadline|title[23]?)\b'
-hits=$(grep -rnE "$pattern" Sources/Hyperterm --include='*.swift' \
-  | grep -v '^Sources/Hyperterm/UI/Design.swift:' \
-  | grep -v '^Sources/Hyperterm/Ghostty/' \
+hits=$(grep -rnE "$pattern" Sources/Tako --include='*.swift' \
+  | grep -v '^Sources/Tako/UI/Design.swift:' \
+  | grep -v '^Sources/Tako/Ghostty/' \
   | grep -v '// design-exempt' || true)
 if [ -n "$hits" ]; then
   echo "Raw design values outside UI/Design.swift (use the tokens):"

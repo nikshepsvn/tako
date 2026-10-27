@@ -1,5 +1,5 @@
 #!/bin/sh
-# Embeds Chromium (CEF) into the built Hyperterm.app: the framework plus the five helper apps
+# Embeds Chromium (CEF) into the built Tako.app: the framework plus the five helper apps
 # Chromium launches renderers, GPU and utility processes from. Run as an Xcode post-build phase.
 #
 # The CEF distribution (~130 MB download, ~400 MB extracted) is cached once per version in
@@ -67,7 +67,7 @@ prepare_distribution
 APP="$TARGET_BUILD_DIR/$WRAPPER_NAME"
 FRAMEWORKS="$APP/Contents/Frameworks"
 APP_NAME="$EXECUTABLE_NAME"
-HELPER_BINARY="$BUILT_PRODUCTS_DIR/HypertermHelper"
+HELPER_BINARY="$BUILT_PRODUCTS_DIR/TakoHelper"
 IDENTITY="${EXPANDED_CODE_SIGN_IDENTITY:--}"
 [ -n "$IDENTITY" ] || IDENTITY="-"
 mkdir -p "$FRAMEWORKS"
