@@ -434,6 +434,13 @@ final class TakoLink: ObservableObject {
         EventLog.record("link", "\(what) \(kind.rawValue) (\(bytes) B) \(what == "sent" ? "to" : "from") \(peer.name)", fields: fields)
     }
 
+    /// Previews and snapshot tests: what Settings and the dock show, without a network.
+    func showPreview(nearby: [Nearby], pairing: Pairing?, status: String = "On") {
+        self.nearby = nearby
+        self.pairing = pairing
+        self.status = status
+    }
+
     // MARK: - Pairing
 
     func pair(with nearby: Nearby) {

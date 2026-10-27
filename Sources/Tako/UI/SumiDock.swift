@@ -405,6 +405,7 @@ private struct SumiHeader: View {
                 }
             }
             Spacer(minLength: 0)
+            LinkChip(link: store.link, store: store)
             SumiPlanChip(plan: store.sumiBrain.plan, store: store)
             SumiCLIMenu(store: store, chooseModel: chooseModel)
             Button(action: collapse) {
