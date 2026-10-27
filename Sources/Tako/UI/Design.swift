@@ -98,6 +98,8 @@ enum Ink {
     static let accent = NSColor(srgbRed: 0.851, green: 0.290, blue: 0.200, alpha: 1)
     /// Where focus is: the focused tile, drop targets, a split being dragged. Bone, half strength.
     static let focus = NSColor(srgbRed: 0.929, green: 0.910, blue: 0.867, alpha: 0.5)
+    /// Ai (indigo), work in progress: `Palette.working` for AppKit layers (the spinner).
+    static let working = NSColor(srgbRed: 0.494, green: 0.612, blue: 0.788, alpha: 1)
 }
 
 /// The same layers for SwiftUI.
@@ -117,7 +119,7 @@ enum Tone {
 enum Palette {
     static let accent = Color(nsColor: Ink.accent)
     /// An agent at work: ai (indigo), calm enough to sit on many rows at once.
-    static let working = Color(nsColor: NSColor(srgbRed: 0.494, green: 0.612, blue: 0.788, alpha: 1))
+    static let working = Color(nsColor: Ink.working)
     /// Something needs you: yamabuki (gold).
     static let attention = Color(nsColor: NSColor(srgbRed: 0.894, green: 0.647, blue: 0.247, alpha: 1))
     /// Beni (crimson), rosier than the vermilion accent so failure never reads as focus.

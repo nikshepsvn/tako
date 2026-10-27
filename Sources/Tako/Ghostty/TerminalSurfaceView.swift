@@ -66,6 +66,10 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     private var pointerStyle: NSCursor = .iBeam
     private var trackingArea: NSTrackingArea?
     private var windowOcclusionObserver: NSObjectProtocol?
+    /// Screen moves, display reconfiguration and wake: each can leave libghostty's display link
+    /// on a display the window no longer uses, so the terminal stops drawing (a blank tile that
+    /// seems to ignore typing) until the view is re-added to a window.
+    private var displayObservers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
     private var hostOccluded = true
     private var lastPixelSize: NSSize?
     private var lastContentScale: NSSize?
@@ -131,6 +135,8 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
         }
         windowKeyObservers.forEach { NotificationCenter.default.removeObserver($0) }
         windowKeyObservers = []
+        displayObservers.forEach { $0.center.removeObserver($0.token) }
+        displayObservers = []
         SecureInput.removeScoped(ObjectIdentifier(self))
         guard let surface else { return }
         self.surface = nil
@@ -418,12 +424,43 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
                 }
             }
         }
+        displayObservers.forEach { $0.center.removeObserver($0.token) }
+        displayObservers = []
+        if let window {
+            let app = NotificationCenter.default, workspace = NSWorkspace.shared.notificationCenter
+            let sources: [(NotificationCenter, Notification.Name, AnyObject?)] = [
+                (app, NSWindow.didChangeScreenNotification, window),
+                (app, NSApplication.didChangeScreenParametersNotification, nil),
+                (workspace, NSWorkspace.screensDidWakeNotification, nil),
+                (workspace, NSWorkspace.didWakeNotification, nil),
+            ]
+            displayObservers = sources.map { center, name, object in
+                (center, center.addObserver(forName: name, object: object, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.displayChanged() }
+                })
+            }
+        }
         syncSurfaceFocus()
         updateOcclusion()
+        updateDisplay()
+    }
+
+    /// Points libghostty at the window's current display, so vsync follows the screen it is on.
+    private func updateDisplay() {
         guard let surface, let screen = window?.screen,
               let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32 else { return }
         ghostty_surface_set_display_id(surface, displayID)
         viewDidChangeBackingProperties()
+    }
+
+    /// After a display change or wake: rebind the display, re-send occlusion (a stale "hidden"
+    /// stops the renderer) and ask for a frame, as re-adding the view to a window would.
+    private func displayChanged() {
+        guard let surface, window != nil else { return }
+        updateDisplay()
+        isOccluded = nil
+        updateOcclusion()
+        ghostty_surface_refresh(surface)
     }
 
     // MARK: - Cursor

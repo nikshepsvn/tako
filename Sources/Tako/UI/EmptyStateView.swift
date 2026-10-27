@@ -77,6 +77,33 @@ private struct StartRow: View {
     }
 }
 
+/// The canvas while sessions exist but none is showing on it.
+struct NothingOnCanvasView: View {
+    var body: some View {
+        VStack(spacing: Space.m) {
+            Image(systemName: "rectangle.dashed").font(Typeface.title.weight(.light)).foregroundStyle(Tone.faint)
+            Text("Nothing on the canvas").font(Typeface.headline).foregroundStyle(Tone.text)
+            Text("Your sessions are parked on the shelf, exited, or in their own windows. Pick one in the sidebar to bring it back.")
+                .font(Typeface.callout).foregroundStyle(Tone.muted)
+                .multilineTextAlignment(.center).frame(maxWidth: 340)
+            HStack(spacing: Space.l) {
+                hint("⌘P", "Switch")
+                hint("⌘N", "New session")
+            }
+        }
+        .padding(Space.xl)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func hint(_ keys: String, _ title: String) -> some View {
+        HStack(spacing: Space.xs + 2) {
+            KeyboardHint(keys: keys)
+            Text(title).font(Typeface.caption).foregroundStyle(Tone.faint).fixedSize()
+        }
+    }
+}
+
 /// Carries a kind through the responder chain from SwiftUI buttons.
 final class KindSender: NSObject {
     let kind: SessionKind
@@ -87,6 +114,12 @@ final class KindSender: NSObject {
 enum NSHostingViewFactory {
     static func emptyState() -> NSView {
         let view = NSHostingView(rootView: EmptyStateView())
+        view.autoresizingMask = [.width, .height]
+        return view
+    }
+
+    static func nothingOnCanvas() -> NSView {
+        let view = NSHostingView(rootView: NothingOnCanvasView())
         view.autoresizingMask = [.width, .height]
         return view
     }

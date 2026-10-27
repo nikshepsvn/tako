@@ -140,13 +140,32 @@ final class TerminalAreaView: NSView {
             tile.isFocusedTile = id == focused
         }
         emptyState.isHidden = !tiles.isEmpty
+        updateNothingShown(tilesExist: !tiles.isEmpty, anyVisible: !visibleOrder.isEmpty)
         if changed { needsLayout = true; layoutSubtreeIfNeeded() }
-        if takeFocus, let focused, visibleSet.contains(focused), let surface = tiles[focused]?.session.surface,
+        // A status refresh never takes focus from a field, but it does rehome a keyboard that was
+        // left on a tile it just hid (parked, exited off the grid) or on nothing at all.
+        let keyboardLost = window.map(MainWindowController.keyboardIsLost) ?? false
+        if takeFocus || keyboardLost, let focused, visibleSet.contains(focused), let surface = tiles[focused]?.session.surface,
            window?.firstResponder !== surface {
             window?.makeFirstResponder(surface)
             if focused != lastFocused { tiles[focused]?.showRecapIfNeeded() }
         }
         lastFocused = focused
+    }
+
+    /// Sessions exist but none is on the canvas (all parked, exited, or in their own windows):
+    /// say so, instead of an empty canvas that looks broken and takes no typing.
+    private var nothingShown: NSView?
+
+    private func updateNothingShown(tilesExist: Bool, anyVisible: Bool) {
+        let show = tilesExist && !anyVisible
+        if show, nothingShown == nil {
+            let view = NSHostingViewFactory.nothingOnCanvas()
+            view.frame = bounds
+            addSubview(view, positioned: .below, relativeTo: tiles.values.first)
+            nothingShown = view
+        }
+        nothingShown?.isHidden = !show
     }
 
     func showSearch(for id: UUID?) {
@@ -193,6 +212,7 @@ final class TerminalAreaView: NSView {
     override func layout() {
         super.layout()
         emptyState.frame = bounds
+        nothingShown?.frame = bounds
         let area = bounds
         // Panes float inset from the window edges, like content panes in Apple's apps.
         let inset = min(LayoutTree.gap, max(0, min(area.width, area.height) / 2))

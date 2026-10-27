@@ -136,9 +136,14 @@ final class SumiDock {
     /// A click outside the panel and its button, except in a sheet (a confirm Sumi asked for).
     private func closeOnClickAway(_ event: NSEvent) {
         guard state.isOpen, let clicked = event.window, clicked !== panel, clicked !== button,
-              clicked.sheetParent == nil, !keepsOpenForClicks(clicked) else { return }
+              clicked.sheetParent == nil, !keepsOpenForClicks(clicked), !Self.isPanelPopover(clicked) else { return }
         // The click is already taking focus where it landed.
         close(restoreFocus: false)
+    }
+
+    /// The plan board opens as a popover off the header; clicks in it belong to the panel.
+    private static func isPanelPopover(_ window: NSWindow) -> Bool {
+        window.parent is SumiPanel || String(describing: type(of: window)).contains("Popover")
     }
 
     /// A click anywhere on the panel (its frame and header too) leaves the keyboard in the terminal.
@@ -400,6 +405,7 @@ private struct SumiHeader: View {
                 }
             }
             Spacer(minLength: 0)
+            SumiPlanChip(plan: store.sumiBrain.plan, store: store)
             SumiCLIMenu(store: store, chooseModel: chooseModel)
             Button(action: collapse) {
                 Image(systemName: "chevron.down").font(Typeface.caption.weight(.semibold)).foregroundStyle(Tone.muted)

@@ -197,7 +197,8 @@ struct AgentRow: View {
     private var detailLine: (text: String, mono: Bool, color: Color)? {
         switch session.state {
         case .failed(let reason): return (reason, false, Palette.failed)
-        case .exited: return ("Agent exited · shell open", false, Tone.faint)
+        case .exited(let code):
+            return (code == 0 ? "Agent exited · shell open" : "Agent exited (code \(code)) · shell open", false, Tone.faint)
         case .starting: return (session.isWaking ? "Waking…" : "Starting…", false, Tone.faint)
         case .working:
             if let activity = session.activity { return (activity, true, Tone.muted) }
@@ -248,7 +249,7 @@ struct AgentRow: View {
                     .buttonStyle(.plain)
                     .help("Review \(review.files) changed file\(review.files == 1 ? "" : "s") (⌥⌘R)")
                 }
-                if queued > 0 { Tag(text: "\(queued) queued") }
+                if queued > 0 { QueuedTag(session: session) }
             }
         }
     }
@@ -859,8 +860,11 @@ private struct WindowControls: View {
             IconButton(symbol: "sidebar.right", help: "Show or hide the inspector (⌥⌘I)", action: actions.toggleInspector)
             if store.phoneModeAvailable || store.isPhoneModeOn { PhoneModeButton(store: store) }
             Spacer(minLength: Space.xs)
+            TakoMemoryChip(steward: .shared)
             let waiting = store.attentionCount
-            if waiting > 0 { WaitingBadge(count: waiting, action: store.selectNextNeedingAttention) }
+            if waiting > 0 {
+                WaitingBadge(count: waiting, labels: store.waitingSessions.map(\.label), action: store.selectNextNeedingAttention)
+            }
             Menu {
                 Button("New Terminal…", action: actions.newSession)
                 Divider()
@@ -913,10 +917,53 @@ private struct LayoutPicker: View {
     }
 }
 
+/// Messages other agents sent that haven't reached this one yet: it is mid-turn or blocked.
+/// Gold once a sender has been told its message is stale.
+private struct QueuedTag: View {
+    @ObservedObject var session: TerminalSession
+
+    var body: some View {
+        let summary = session.queueSummary
+        Tag(text: "\(summary.count) queued", tint: summary.stale ? Palette.attention : Tone.muted)
+            .help(help)
+            .accessibilityLabel("\(summary.count) message\(summary.count == 1 ? "" : "s") queued, not delivered yet")
+    }
+
+    private var help: String {
+        let lines = session.queue.prefix(6).map { message in
+            let from = message.sender.map { "@" + $0 } ?? "you"
+            return "• \(message.id) from \(from), \(elapsed(since: message.queuedAt)) ago: " + String(message.text.prefix(80))
+        }
+        return (["Not delivered yet. They land when @\(session.label) is free; senders hear when they do."] + lines)
+            .joined(separator: "\n")
+    }
+}
+
+/// Tako's own memory, shown in the footer only past the point where a restart is worth it.
+private struct TakoMemoryChip: View {
+    @ObservedObject var steward: Steward
+
+    var body: some View {
+        if steward.takoBytes >= TakoFootprint.warnBytes {
+            Tag(text: "Tako " + ByteCountFormatter.string(fromByteCount: Int64(steward.takoBytes), countStyle: .memory),
+                tint: Palette.attention)
+                .help("Tako itself is using a lot of memory. Restart it when nothing is mid-task; sessions resume. Details in the inspector's Info tab.")
+        }
+    }
+}
+
 /// Shown only while sessions need you; takes you to the one that has waited longest.
 private struct WaitingBadge: View {
     let count: Int
+    /// Who is waiting, longest first: the coalesced banner's names, kept on screen.
+    var labels: [String] = []
     let action: () -> Void
+
+    private var who: String {
+        guard !labels.isEmpty else { return "" }
+        let named = labels.prefix(4).map { "@" + $0 }.joined(separator: ", ")
+        return "\n" + named + (labels.count > 4 ? " and \(labels.count - 4) more" : "")
+    }
 
     var body: some View {
         Button(action: action) {
@@ -931,7 +978,7 @@ private struct WaitingBadge: View {
             .background(Palette.attention.opacity(0.12), in: Capsule())
         }
         .buttonStyle(.plain)
-        .help((count == 1 ? "1 needs you" : "\(count) need you") + " · go to the one that has waited longest (⌘J)")
+        .help((count == 1 ? "1 needs you" : "\(count) need you") + " · go to the one that has waited longest (⌘J)" + who)
         .accessibilityLabel(count == 1 ? "1 session needs you" : "\(count) sessions need you")
     }
 }

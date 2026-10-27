@@ -19,7 +19,7 @@ struct BrailleSpinner: NSViewRepresentable {
         static let period: CFTimeInterval = 1
         static let animationKey = "frames"
         private static let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        private static let color = NSColor(srgbRed: 0.494, green: 0.612, blue: 0.788, alpha: 1)
+        private static let color = Ink.working
 
         private let glyph = CALayer()
 

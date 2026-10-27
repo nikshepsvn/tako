@@ -792,8 +792,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
            let fallback = store.visibleIDs.first.flatMap({ id in store.sessions.first { $0.id == id } }) {
             store.select(fallback)
         }
-        guard let window, window.firstResponder == nil || window.firstResponder === window else { return }
+        guard let window, Self.keyboardIsLost(in: window) else { return }
         if let session = store.selected, session.surface.window === window { window.makeFirstResponder(session.surface) }
+    }
+
+    /// Nothing visible would take a key: no first responder, the window itself, or a view that was
+    /// hidden or moved out of this window (a tile parked, detached or closed while it had focus).
+    /// Typing then went nowhere until the window was closed and reopened.
+    static func keyboardIsLost(in window: NSWindow) -> Bool {
+        guard let responder = window.firstResponder, responder !== window else { return true }
+        guard let view = responder as? NSView else { return false }
+        return view.window !== window || view.isHiddenOrHasHiddenAncestor
     }
 }
 
