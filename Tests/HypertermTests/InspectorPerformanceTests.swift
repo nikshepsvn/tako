@@ -1,3 +1,4 @@
+import AppKit
 import Darwin
 import XCTest
 @testable import Hyperterm
@@ -151,5 +152,45 @@ final class InspectorPerformanceTests: XCTestCase {
 
     func testMissingProcessIdentityStillFailsClosed() {
         XCTAssertEqual(ProcessInspector().identify(pid: -1), .unknown)
+    }
+
+    // MARK: - Main thread and spawned terminals
+
+    /// The helpers spinner steps in the render server: no TimelineView redrawing the sidebar.
+    @MainActor
+    func testSpinnerAnimatesWithCoreAnimationAndHoldsStillForReduceMotion() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 40, height: 20), styleMask: [.borderless],
+                              backing: .buffered, defer: true)
+        let spinner = BrailleSpinner.SpinnerView(frame: NSRect(x: 0, y: 0, width: 12, height: 14))
+        window.contentView?.addSubview(spinner)
+        let glyph = try XCTUnwrap(spinner.layer?.sublayers?.first)
+        let animation = try XCTUnwrap(glyph.animation(forKey: BrailleSpinner.SpinnerView.animationKey) as? CAKeyframeAnimation)
+        XCTAssertEqual(animation.values?.count, BrailleSpinner.SpinnerView.frames.count)
+        XCTAssertEqual(animation.calculationMode, .discrete)
+        XCTAssertEqual(animation.repeatCount, .infinity)
+        XCTAssertNotNil(glyph.contents)
+
+        spinner.reduceMotion = true
+        XCTAssertNil(glyph.animation(forKey: BrailleSpinner.SpinnerView.animationKey))
+        XCTAssertNotNil(glyph.contents, "Reduce Motion still shows one glyph")
+    }
+
+    /// Descriptors Tako opened without close-on-exec (as Chromium does) must not reach a shell.
+    func testDescriptorsAreMarkedCloseOnExecBeforeATerminalSpawns() throws {
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("tako-fd-\(UUID().uuidString)").path
+        let file = open(path, O_CREAT | O_RDWR, 0o600)
+        XCTAssertGreaterThan(file, STDERR_FILENO)
+        var pair: [Int32] = [0, 0]
+        XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, &pair), 0)
+        defer {
+            ([file] + pair).forEach { close($0) }
+            unlink(path)
+        }
+        for fd in [file] + pair { XCTAssertEqual(fcntl(fd, F_GETFD) & FD_CLOEXEC, 0) }
+
+        XCTAssertGreaterThanOrEqual(InheritedDescriptors.closeOnExec(), 3)
+        for fd in [file] + pair { XCTAssertNotEqual(fcntl(fd, F_GETFD) & FD_CLOEXEC, 0) }
+        XCTAssertEqual(fcntl(STDIN_FILENO, F_GETFD) & FD_CLOEXEC, 0, "stdio is left alone")
+        XCTAssertEqual(InheritedDescriptors.closeOnExec(), 0, "A second pass finds nothing to change")
     }
 }
