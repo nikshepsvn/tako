@@ -36,7 +36,7 @@ extension SessionStore {
         guard message.hasValidIDs else { return }
         var localID: String?
         switch message.kind {
-        case .ready: return
+        case .ready, .receipt: return
         case .chat: break
         case .ask:
             // Sumi answers by an id made here, so nothing the peer chose names the request.

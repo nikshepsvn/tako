@@ -266,6 +266,11 @@ final class LinkSumiTests: XCTestCase {
         store.link.receive(LinkMessage(kind: .chat, id: "m-0000b16b", text: String(repeating: "x", count: LinkLimits.maxText + 1)), from: alex,
                            now: now.addingTimeInterval(120))
         XCTAssertEqual(heard, 30, "oversized messages are dropped")
+        // Accepted messages get a receipt; a receipt itself is never passed on to Sumi.
+        XCTAssertTrue(store.link.receive(LinkMessage(kind: .chat, id: "m-00000abc", text: "hi"), from: alex, now: now.addingTimeInterval(240)))
+        XCTAssertFalse(store.link.receive(LinkMessage(kind: .receipt, id: "k-00000abc", requestID: "m-00000abc"), from: alex,
+                                          now: now.addingTimeInterval(240)))
+        XCTAssertEqual(heard, 31)
         _ = sumi
     }
 

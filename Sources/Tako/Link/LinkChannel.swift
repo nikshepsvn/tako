@@ -22,6 +22,9 @@ struct LinkMessage: Codable, Equatable {
         /// A request for context; the friend's Sumi answers with `answer` and the same id.
         case ask
         case answer
+        /// The receiver accepted message `requestID` (paired, within limits) and passed it to its
+        /// Sumi. Only then does the sender report it sent.
+        case receipt
     }
 
     var kind: Kind

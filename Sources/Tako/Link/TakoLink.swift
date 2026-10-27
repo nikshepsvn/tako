@@ -134,7 +134,9 @@ final class TakoLink: ObservableObject {
     func unpair(_ peer: Peer) {
         settings.peers.removeAll { $0.publicKey == peer.publicKey }
         save()
-        open.removeValue(forKey: peer.fingerprint)?.channel.close("unpaired")
+        // Every connection with that key: each side may have dialed the other.
+        open[peer.fingerprint] = nil
+        connections.values.filter { $0.channel.peerKey == peer.publicKey }.forEach { $0.channel.close("unpaired") }
         openAsks = openAsks.filter { $0.value.fingerprint != peer.fingerprint }
         sentAsks = sentAsks.filter { $0.value != peer.fingerprint }
         EventLog.record("link", "unpaired \(peer.name)", fields: ["peer": peer.name, "fingerprint": peer.fingerprint])
@@ -332,7 +334,13 @@ final class TakoLink: ObservableObject {
             guard let key = link.channel.peerKey, let peer = settings.peers.first(where: { $0.publicKey == key }) else {
                 return link.channel.close("\(LinkError.unknownKey)")
             }
-            receive(message, from: peer)
+            if message.kind == .receipt {
+                if let id = message.requestID { link.confirm(id) }
+                return
+            }
+            if receive(message, from: peer) {
+                try? link.channel.send(LinkMessage(kind: .receipt, id: LinkMessage.newID("k"), requestID: message.id))
+            }
         case .pairRequested(let name, let key):
             pairingConnection = link
             pairing = Pairing(name: name, fingerprint: LinkIdentity.fingerprint(of: key), phase: .connecting, incoming: true)
@@ -372,27 +380,30 @@ final class TakoLink: ObservableObject {
     // MARK: - Messages
 
     /// Checks a paired peer's message against the per-peer rate limit, logs it, and hands it on.
-    func receive(_ message: LinkMessage, from peer: Peer, now: Date = Date()) {
-        guard message.kind != .ready else { return }
+    /// Whether it was accepted (and so gets a receipt).
+    @discardableResult
+    func receive(_ message: LinkMessage, from peer: Peer, now: Date = Date()) -> Bool {
+        guard message.kind != .ready, message.kind != .receipt else { return false }
         let bytes = message.text?.utf8.count ?? 0
         guard bytes <= LinkLimits.maxText else {
             audit("dropped", peer: peer, kind: message.kind, bytes: bytes, note: "too large")
-            return
+            return false
         }
         guard message.hasValidIDs else {
             audit("dropped", peer: peer, kind: message.kind, bytes: bytes, note: "malformed id")
-            return
+            return false
         }
         guard incomingLimit.allow(peer.fingerprint, now: now) else {
             audit("dropped", peer: peer, kind: message.kind, bytes: bytes, note: "rate limited")
-            return
+            return false
         }
         audit("received", peer: peer, kind: message.kind, bytes: bytes)
         onMessage?(peer, message)
+        return true
     }
 
     /// Sends over an open session, dialing one first if needed. `completion` gets nil once the
-    /// frame is handed to the socket, or why it couldn't go.
+    /// peer's receipt arrives, or why it didn't (unreachable, refused, no receipt in 10 s).
     func send(_ message: LinkMessage, to peer: Peer, completion: @escaping (String?) -> Void) {
         let finish: (String?) -> Void = { [weak self] error in
             let bytes = message.text?.utf8.count ?? 0
@@ -470,6 +481,9 @@ final class LinkConnection {
     let channel: LinkChannel
     private var framer = LinkFramer()
     private var pending: [(message: LinkMessage, done: (String?) -> Void)] = []
+    /// Sent, waiting for the peer's receipt, by message id.
+    private var awaiting: [String: (String?) -> Void] = [:]
+    static let receiptTimeout: TimeInterval = 10
 
     init(connection: NWConnection, channel: LinkChannel) {
         self.connection = connection
@@ -524,21 +538,32 @@ final class LinkConnection {
         for item in waiting {
             do {
                 try channel.send(item.message)
-                item.done(nil)
+                let id = item.message.id
+                awaiting[id] = item.done
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.receiptTimeout) { [weak self] in
+                    self?.awaiting.removeValue(forKey: id)?("no receipt in \(Int(Self.receiptTimeout)) s: it may not have arrived")
+                }
             } catch {
                 item.done("\(error)")
             }
         }
     }
 
-    func fail(_ reason: String) {
-        let waiting = pending
-        pending = []
-        waiting.forEach { $0.done(reason) }
+    func confirm(_ id: String) {
+        awaiting.removeValue(forKey: id)?(nil)
     }
 
-    /// After a moment, so a final `bye` reaches the peer first.
+    func fail(_ reason: String) {
+        let waiting = pending.map(\.done) + Array(awaiting.values)
+        pending = []
+        awaiting = [:]
+        waiting.forEach { $0(reason) }
+    }
+
+    /// After a moment, so a final plaintext `bye` reaches the peer first; at once after the
+    /// handshake, where there is none.
     func cancel() {
+        guard channel.peerKey == nil || !channel.isOpen else { return connection.cancel() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [connection] in connection.cancel() }
     }
 }
