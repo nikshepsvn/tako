@@ -5,7 +5,9 @@ import AppKit
 /// The caller comes from the kernel (`CallerIdentity`), never from the request. Fail closed:
 /// - The user is a process outside Tako, or one traced to a shell/server terminal.
 /// - Agents (traced to an agent terminal) may message other agents, read agents and servers,
-///   restart servers, start servers with the user's OK, and rename only themselves.
+///   restart servers, start servers with the user's OK, and rename only themselves. Waiting on,
+///   diffing and reading the logs of a terminal follow read's rules; team-board posts and claims
+///   act as the calling agent (ControlHandler+AgentTools).
 /// - Anything else from inside Tako (detached, unknown) gets read-only access.
 /// Only the user may press keys, answer prompts, close terminals, or type raw text: those would
 /// let one agent answer another's permission prompts or run commands outside its own checks.
@@ -20,12 +22,12 @@ struct ControlHandler {
     let store: SessionStore
     let caller: CallerIdentity
 
-    private var callerSession: TerminalSession? {
+    var callerSession: TerminalSession? {
         guard case .session(let id) = caller else { return nil }
         return store.session(forEnvironmentID: id)
     }
 
-    private var callerAgent: TerminalSession? {
+    var callerAgent: TerminalSession? {
         guard let session = callerSession, session.kind.isAgent else { return nil }
         return session
     }
@@ -35,7 +37,7 @@ struct ControlHandler {
         return agent
     }
 
-    private var isUser: Bool {
+    var isUser: Bool {
         switch caller {
         case .external: return true
         case .session: return callerSession.map { !$0.kind.isAgent } ?? false
@@ -179,6 +181,10 @@ struct ControlHandler {
         case .sumi:
             guard callerSumi != nil else { reply(.failure("only Sumi keeps the board and its memory")); return }
             handleSumi(request, reply: reply)
+        case .wait:
+            waitFor(request, reply: reply)
+        case .changes:
+            changes(request, reply: reply)
         default:
             reply(handle(request))
         }
@@ -188,7 +194,7 @@ struct ControlHandler {
         switch request.cmd {
         case .list:
             var response = ControlResponse.success()
-            response.sessions = store.orderedSessions.map { $0.info() }
+            response.sessions = store.orderedSessions.map(listedInfo)
             return response
         case .hook:
             // Hook events only count when the kernel traces them to the session they describe.
@@ -276,21 +282,27 @@ struct ControlHandler {
             return phoneMode(request)
         case .rename:
             return rename(request)
+        case .notify where callerAgent != nil:
+            return notifyUser(request)
+        case .board:
+            return board(request)
+        case .logs:
+            return logs(request)
         case .notify:
             guard let target = callerSession ?? (isUser ? resolve(request.target) : nil) else { return notFound(request.target) }
             store.sessionWantsAttention(target, title: "@\(target.label)", body: sanitizeMessage(request.text ?? ""))
             return .success()
-        case .permission, .subscribe, .browser, .heavy, .act, .sumi:
+        case .permission, .subscribe, .browser, .heavy, .act, .sumi, .wait, .changes:
             return .success()
         }
     }
 
-    private func resolve(_ target: String?) -> TerminalSession? {
+    func resolve(_ target: String?) -> TerminalSession? {
         guard let target, !target.isEmpty else { return nil }
         return store.find(target)
     }
 
-    private func notFound(_ target: String?) -> ControlResponse {
+    func notFound(_ target: String?) -> ControlResponse {
         let known = store.sessions.map { "@" + $0.label }.joined(separator: ", ")
         return .failure("no terminal named \(target ?? "(none)"). Known: \(known.isEmpty ? "none" : known)")
     }

@@ -37,6 +37,8 @@ final class SessionStore: ObservableObject {
     /// What Sumi opened in the last few seconds (see showOpenedBySumi).
     var sumiOpened: [(id: UUID, at: Date)] = []
     var overlapWatch = OverlapWatch()
+    /// Worker agents' waits, team boards and notification limits (SessionStore+AgentTools).
+    var agentTools = AgentToolsState()
     /// Called when a session's status changes. It can change which tiles show (grid hides exited
     /// sessions) and their chrome, but must not pull keyboard focus away from where the user is.
     var onStatusChange: (() -> Void)?
@@ -493,6 +495,7 @@ final class SessionStore: ObservableObject {
         dropChannel(for: session)
         sessions.removeAll { $0.id == session.id }
         forgetOverlaps(with: session)
+        agentToolsSessionClosed(session)
         childCancellables[session.id] = nil
         recent.removeAll { $0 == session.id }
         onRemove?(session)
@@ -626,6 +629,7 @@ final class SessionStore: ObservableObject {
         adoptIntoPhoneMode(session)
         delegationStateChanged(session, from: previous)
         watchOverlaps(session, from: previous)
+        agentToolsStateChanged(session)
         let isVisible = userIsLooking(at: session)
         switch session.state {
         case .needsInput(let reason):

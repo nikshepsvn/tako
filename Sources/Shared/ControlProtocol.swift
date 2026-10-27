@@ -33,6 +33,11 @@ enum ControlCommand: String, Codable {
     case act           // Sumi acts on an agent: text = choose (options) | trust | signin | interrupt (hard)
                        // | keys (keys) | type (text in label, submit) | restart | mode (mode)
     case sumi          // Sumi's board and memory: text = standup | plan | remember | recall, payload = arguments JSON
+    // Worker coordination tools (MCPAgentTools):
+    case wait          // block until target reaches text = done | needs-input | exited, or prints `pattern`
+    case changes       // target's diff: text = branch | uncommitted, patch, paths
+    case board         // the project's team board: text = read | note | claim | release
+    case logs          // target's output filtered: pattern (grep), errors in submit, since, lines
 }
 
 struct ControlRequest: Codable {
@@ -81,6 +86,16 @@ struct ControlRequest: Codable {
     var mode: String?
     /// For `act` interrupt: Ctrl-C instead of Esc.
     var hard: Bool?
+    /// For `wait` and `logs`: a regular expression output lines are matched against.
+    var pattern: String?
+    /// For `wait`: seconds before giving up. For `board` claim: minutes the claim lasts.
+    var timeout: Int?
+    /// For `logs`: the cursor a previous read returned; only lines after it come back.
+    var since: String?
+    /// For `changes`: include the patch. For `logs`: only error lines.
+    var flag: Bool?
+    /// For `changes` and `board`: files or globs, relative to the workspace root.
+    var paths: [String]?
 }
 
 /// The most agents one start_agent call may start on the same task.
@@ -125,11 +140,13 @@ struct SessionInfo: Codable, Equatable {
     var detached: Bool? = nil
     /// Claude subagents still running, which may outlast the session's own turn.
     var subagents: Int? = nil
+    /// Files and globs this agent claimed on its project's team board.
+    var claims: [String]? = nil
 
     /// `sumi` keeps its old wire name, so an `ht` from before the rename still reads it.
     enum CodingKeys: String, CodingKey {
         case id, label, kind, state, stateDetail, summary, title, cwd, command, ports, unread, agentSessionId
-        case labelSource, activity, project, branch, conflicts, asleep, delegation, detached, subagents
+        case labelSource, activity, project, branch, conflicts, asleep, delegation, detached, subagents, claims
         case sumi = "organizer"
     }
 }
