@@ -168,12 +168,12 @@ enum SessionReaper {
     }
 
     /// At launch, before sessions restore: stops what an earlier run that quit or crashed left
-    /// running, notes each in hooks.log, and calls `completion` on the main queue once they are
+    /// running, notes each in events.jsonl, and calls `completion` on the main queue once they are
     /// gone. Restoring only then means a resumed agent never shares its conversation, worktree
     /// lock or dev-server port with the copy it replaces. With nothing to stop, `completion`
     /// runs at once.
     static func sweepLeftovers(ledger url: URL = ProcessLedger.url, grace: TimeInterval = 2,
-                               log: (String, String) -> Void = { HookLog.append(source: "sweep", sessionID: $1, payload: $0) },
+                               log: (String, String) -> Void = { EventLog.record("sweep", session: $1, $0) },
                                completion: @escaping @MainActor () -> Void = {}) {
         let found = leftovers(inLedger: url)
         guard !found.isEmpty else { MainActor.assumeIsolated { completion() }; return }

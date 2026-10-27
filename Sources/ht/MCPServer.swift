@@ -710,8 +710,7 @@ private func startChannelLoop() {
                 continue
             }
             for message in response.messages ?? [] {
-                write(["jsonrpc": "2.0", "method": "notifications/claude/channel",
-                       "params": ["content": message, "meta": ["source": "hyperterm"]]])
+                write(ChannelEvent.notification(message))
             }
         }
     }

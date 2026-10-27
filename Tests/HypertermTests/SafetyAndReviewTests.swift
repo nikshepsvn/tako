@@ -155,7 +155,7 @@ final class SafetyAndReviewTests: XCTestCase {
         XCTAssertEqual(session.state, .needsInput(TerminalSession.trustReason))
         XCTAssertEqual(session.info().state, "needs-input")
         XCTAssertFalse(session.atRest, "queued messages wait while the prompt is up")
-        XCTAssertTrue(session.deliver("hello", from: "web").hasPrefix("queued"))
+        XCTAssertTrue(session.deliver("hello", from: "web").hasPrefix("Queued"))
 
         // SessionStart after "Yes" keeps "needs you"; the screen clearing moves it on.
         store.applyHook(source: "claude", session: session, json: ["hook_event_name": "SessionStart"], sentAt: nil)

@@ -92,7 +92,8 @@ final class SleepTests: XCTestCase {
         let session = track(TerminalSession(spec: spec, resume: true))
 
         let outcome = session.deliver("Message from @web: rebase please", from: "web")
-        XCTAssertTrue(outcome.hasPrefix("queued"), outcome)
+        XCTAssertTrue(outcome.hasPrefix("Queued (message m"), outcome)
+        XCTAssertTrue(outcome.contains("NOT delivered yet"), outcome)
         XCTAssertEqual(session.pendingMessages, ["Message from @web: rebase please"])
         session.retryPendingMessages()
         XCTAssertEqual(session.pendingMessages.count, 1, "nothing is typed into the bare shell")

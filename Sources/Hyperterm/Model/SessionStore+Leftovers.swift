@@ -24,7 +24,7 @@ extension SessionStore {
             if let known = known.withProcessDirectories() {
                 records = WorktreeJanitor.collect(records: records, known: known)
             } else {
-                HookLog.append(source: "gc", sessionID: nil, payload: "skipped worktrees: couldn't list processes' folders")
+                EventLog.record("gc", "skipped worktrees: couldn't list processes' folders")
             }
             WorktreeLedger.save(records)
             CheckpointJanitor.collect(roots: roots, keep: keep)

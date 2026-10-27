@@ -104,34 +104,92 @@ final class StewardTests: XCTestCase {
 
     // MARK: Escalations
 
-    func testMemoryEscalatesOncePerEpisode() {
+    func testABigAgentAloneIsNotNewsUnderNormalPressure() {
+        var tracker = EscalationTracker()
+        let now = Date()
+        // 4 GB is an ordinary Claude Code; it used to escalate at 3 GB.
+        for minute in 0..<60 {
+            XCTAssertTrue(tracker.update(sessionID: "a", label: "api", footprint: 4 << 30, cpu: 5, agentIdle: false,
+                                         now: now + Double(minute * 60)).isEmpty)
+        }
+        XCTAssertTrue(tracker.active.isEmpty)
+    }
+
+    func testMemoryPressureNamesTheBigAgentsOncePerEpisode() {
         var tracker = EscalationTracker()
         let now = Date()
         let big: UInt64 = 4 << 30
-        XCTAssertEqual(tracker.update(sessionID: "a", label: "api", footprint: big, cpu: 5, agentIdle: false, now: now).map(\.kind), [.memory])
-        XCTAssertTrue(tracker.update(sessionID: "a", label: "api", footprint: big, cpu: 5, agentIdle: false, now: now + 3).isEmpty)
-        XCTAssertEqual(tracker.active.count, 1)
-        _ = tracker.update(sessionID: "a", label: "api", footprint: 1 << 30, cpu: 5, agentIdle: false, now: now + 6)
+        XCTAssertTrue(tracker.update(sessionID: "s", label: "small", footprint: 1 << 30, cpu: 5, agentIdle: false, pressure: .warning, now: now).isEmpty)
+        let raised = tracker.update(sessionID: "a", label: "api", footprint: big, cpu: 5, agentIdle: false, pressure: .warning, now: now)
+        XCTAssertEqual(raised.map(\.kind), [.memory])
+        XCTAssertTrue(raised[0].message.contains("pressure is warning"), raised[0].message)
+        XCTAssertTrue(tracker.update(sessionID: "a", label: "api", footprint: big, cpu: 5, agentIdle: false, pressure: .critical, now: now + 3).isEmpty)
+        _ = tracker.update(sessionID: "a", label: "api", footprint: big, cpu: 5, agentIdle: false, pressure: .normal, now: now + 6)
         XCTAssertTrue(tracker.active.isEmpty)
-        XCTAssertEqual(tracker.update(sessionID: "a", label: "api", footprint: big, cpu: 5, agentIdle: false, now: now + 9).count, 1)
     }
 
-    func testIdleBurningNeedsTwoMinutesWhileIdle() {
+    func testGrowthPastItsOwnBaselineEscalatesAfterWarmup() {
+        var tracker = EscalationTracker()
+        let start = Date()
+        // Early growth is startup, not a leak.
+        _ = tracker.update(sessionID: "a", label: "api", footprint: 1 << 30, cpu: 5, agentIdle: false, now: start)
+        XCTAssertTrue(tracker.update(sessionID: "a", label: "api", footprint: 4 << 30, cpu: 5, agentIdle: false, now: start + 60).isEmpty)
+        var settled = EscalationTracker()
+        for minute in 0...20 {
+            _ = settled.update(sessionID: "a", label: "api", footprint: 3 << 30, cpu: 5, agentIdle: false, now: start + Double(minute * 60))
+        }
+        // 1.5x but only 1.5 GB more: quiet. 5.5 GB: 1.8x and 2.5 GB more: news.
+        XCTAssertTrue(settled.update(sessionID: "a", label: "api", footprint: 4_831_838_208, cpu: 5, agentIdle: false, now: start + 1_270).isEmpty)
+        let raised = settled.update(sessionID: "a", label: "api", footprint: 5_905_580_032, cpu: 5, agentIdle: false, now: start + 1_280)
+        XCTAssertEqual(raised.map(\.kind), [.memory])
+        XCTAssertTrue(raised[0].message.contains("its usual"), raised[0].message)
+    }
+
+    func testARunawayEscalatesWithoutHistoryOrPressure() {
+        var tracker = EscalationTracker()
+        XCTAssertEqual(tracker.update(sessionID: "a", label: "api", footprint: 13 << 30, cpu: 5, agentIdle: false, now: Date()).map(\.kind), [.memory])
+    }
+
+    func testIdleBurningNeedsFiveMinutesWhileIdle() {
         var tracker = EscalationTracker()
         let start = Date()
         XCTAssertTrue(tracker.update(sessionID: "a", label: "api", footprint: 0, cpu: 40, agentIdle: true, now: start).isEmpty)
-        XCTAssertTrue(tracker.update(sessionID: "a", label: "api", footprint: 0, cpu: 40, agentIdle: true, now: start + 100).isEmpty)
-        let raised = tracker.update(sessionID: "a", label: "api", footprint: 0, cpu: 40, agentIdle: true, now: start + 121)
+        XCTAssertTrue(tracker.update(sessionID: "a", label: "api", footprint: 0, cpu: 40, agentIdle: true, now: start + 200).isEmpty)
+        let raised = tracker.update(sessionID: "a", label: "api", footprint: 0, cpu: 40, agentIdle: true, now: start + 301)
         XCTAssertEqual(raised.map(\.kind), [.idleBurning])
         XCTAssertEqual(raised.first?.since, start)
 
         // Working agents may burn CPU; a dip resets the clock.
         var other = EscalationTracker()
         _ = other.update(sessionID: "b", label: "web", footprint: 0, cpu: 90, agentIdle: false, now: start)
-        XCTAssertTrue(other.update(sessionID: "b", label: "web", footprint: 0, cpu: 90, agentIdle: false, now: start + 300).isEmpty)
+        XCTAssertTrue(other.update(sessionID: "b", label: "web", footprint: 0, cpu: 90, agentIdle: false, now: start + 600).isEmpty)
         _ = other.update(sessionID: "b", label: "web", footprint: 0, cpu: 40, agentIdle: true, now: start)
         _ = other.update(sessionID: "b", label: "web", footprint: 0, cpu: 2, agentIdle: true, now: start + 60)
-        XCTAssertTrue(other.update(sessionID: "b", label: "web", footprint: 0, cpu: 40, agentIdle: true, now: start + 130).isEmpty)
+        XCTAssertTrue(other.update(sessionID: "b", label: "web", footprint: 0, cpu: 40, agentIdle: true, now: start + 330).isEmpty)
+    }
+
+    func testTakoWarnsOnceWhenItsOwnFootprintCrossesTheLine() {
+        var tako = TakoFootprint()
+        let now = Date()
+        XCTAssertNil(tako.update(1 << 30, now: now))
+        XCTAssertEqual(tako.update(TakoFootprint.warnBytes, now: now)?.kind, .takoMemory)
+        XCTAssertNil(tako.update(TakoFootprint.warnBytes + (1 << 30), now: now))
+        // Hovering just under the line doesn't start a new episode.
+        XCTAssertNil(tako.update(TakoFootprint.warnBytes - (1 << 20), now: now))
+        XCTAssertNotNil(tako.warning)
+        XCTAssertNil(tako.update(1 << 30, now: now))
+        XCTAssertNil(tako.warning)
+        XCTAssertNotNil(tako.update(TakoFootprint.warnBytes, now: now))
+        XCTAssertGreaterThan(TakoFootprint.current(), 0)
+    }
+
+    @MainActor func testMachineStatusMentionsTakoItself() {
+        var status = MachineStatus(pressure: .normal, thermal: .nominal, lowPower: false, freeBytes: 0, totalBytes: 0,
+                                   admissionOK: true, queuedLaunches: 0, heavySlotsUsed: 0, heavySlotsTotal: 1,
+                                   heavyWaiting: 0, sessions: [])
+        status.takoBytes = 4 << 30
+        let text = ControlHandler.describe(status)
+        XCTAssertTrue(text.contains("Tako itself · 4.0 GB · high"), text)
     }
 
     // MARK: Sleep candidates

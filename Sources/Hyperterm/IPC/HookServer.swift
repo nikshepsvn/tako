@@ -13,7 +13,6 @@ final class HookServer: @unchecked Sendable {
 
     static let path = "/hook/claude"
     private static let maxRequestBytes = 16_000_000
-    private static let connectionDeadline: UInt64 = 5_000_000_000
     private static let secret = SymmetricKey(size: .bits256)
 
     /// The token a session's agent sends; set as HT_HOOK_TOKEN in its environment.
@@ -33,6 +32,8 @@ final class HookServer: @unchecked Sendable {
     }
 
     private let handler: Handler
+    /// How long one connection may take to deliver its whole request.
+    private let connectionDeadline: UInt64
     private var listenFD: Int32 = -1
     private var source: DispatchSourceRead?
     private(set) var port: UInt16?
@@ -42,7 +43,8 @@ final class HookServer: @unchecked Sendable {
     /// Connections are read in parallel, so one idle or slow socket can't hold up the rest.
     private let readQueue = DispatchQueue(label: "dev.hyperterm.hooks.read", qos: .userInitiated, attributes: .concurrent)
 
-    init(handler: @escaping Handler) {
+    init(connectionDeadline: TimeInterval = 5, handler: @escaping Handler) {
+        self.connectionDeadline = UInt64(connectionDeadline * 1_000_000_000)
         self.handler = handler
     }
 
@@ -76,35 +78,36 @@ final class HookServer: @unchecked Sendable {
     private func acceptConnection() {
         let client = accept(listenFD, nil, nil)
         guard client >= 0 else { return }
-        var timeout = timeval(tv_sec: 2, tv_usec: 0)
-        setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         var noSigPipe: Int32 = 1
         setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
         readQueue.async { [weak self] in self?.serve(client) }
     }
 
+    /// How reading a request ended.
+    enum ReadOutcome: Equatable {
+        case request(HookHTTPRequest)
+        case forbidden, malformed, tooLarge, timedOut, closedEarly
+
+        var status: String {
+            switch self {
+            case .request: return "200 OK"
+            case .forbidden: return "403 Forbidden"
+            case .malformed, .closedEarly: return "400 Bad Request"
+            case .tooLarge: return "413 Content Too Large"
+            case .timedOut: return "408 Request Timeout"
+            }
+        }
+    }
+
     private func serve(_ client: Int32) {
         defer { close(client) }
-        var data = Data()
-        var buffer = [UInt8](repeating: 0, count: 64 * 1024)
-        var parsed = HookHTTPRequest.Parse.incomplete
-        // A trickling client can't hold its reader past the deadline.
-        let deadline = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) + Self.connectionDeadline
-        var headChecked = false
-        while case .incomplete = parsed, data.count <= Self.maxRequestBytes {
-            guard clock_gettime_nsec_np(CLOCK_UPTIME_RAW) < deadline else { return reply(client, status: "408 Request Timeout") }
-            let n = read(client, &buffer, buffer.count)
-            guard n > 0 else { break }
-            data.append(contentsOf: buffer[0..<n])
-            // Auth comes from the headers, so an unauthorized sender is dropped before its body is read.
-            if !headChecked, let head = HookHTTPRequest.parseHead(data) {
-                guard Self.authorizedSession(head) != nil else { return reply(client, status: "403 Forbidden") }
-                headChecked = true
-            }
-            parsed = HookHTTPRequest.parse(data)
+        let outcome = Self.readRequest(client, deadline: clock_gettime_nsec_np(CLOCK_UPTIME_RAW) + connectionDeadline)
+        guard case .request(let request) = outcome else {
+            // A dropped hook leaves a card's status stale; keep a trace of each one.
+            EventLog.record("hook", "answered \(outcome.status)", fields: ["outcome": "\(outcome)"])
+            return reply(client, status: outcome.status)
         }
-        guard case .complete(let request) = parsed else { return reply(client, status: "400 Bad Request") }
-        guard let session = Self.authorizedSession(request) else { return reply(client, status: "403 Forbidden") }
+        guard let session = Self.authorizedSession(request) else { return reply(client, status: ReadOutcome.forbidden.status) }
         // Queued before the reply: Claude sends its next event only once this one is answered,
         // so the serial queue gets them in the order they were sent.
         let handler = self.handler
@@ -115,6 +118,39 @@ final class HookServer: @unchecked Sendable {
         reply(client, status: "200 OK")
     }
 
+    /// Reads one request until its Content-Length has arrived or `deadline` (uptime ns) passes.
+    /// Waits with poll() for the time left rather than a per-read socket timeout: under load
+    /// (180 agents) a 2 s SO_RCVTIMEO made read() return EAGAIN mid-request, which used to end
+    /// the loop and answer a perfectly good hook with 400, leaving card status stale.
+    static func readRequest(_ client: Int32, deadline: UInt64) -> ReadOutcome {
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+        var headChecked = false
+        while true {
+            switch HookHTTPRequest.parse(data) {
+            case .complete(let request): return .request(request)
+            case .invalid: return .malformed
+            case .incomplete: break
+            }
+            guard data.count <= maxRequestBytes else { return .tooLarge }
+            let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+            guard now < deadline else { return .timedOut }
+            var poller = pollfd(fd: client, events: Int16(POLLIN), revents: 0)
+            let ready = poll(&poller, 1, Int32(min((deadline - now) / 1_000_000 + 1, UInt64(Int32.max))))
+            if ready < 0, errno != EINTR { return .closedEarly }
+            guard ready > 0 else { continue }
+            let n = read(client, &buffer, buffer.count)
+            if n < 0, errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR { continue }
+            guard n > 0 else { return .closedEarly }
+            data.append(contentsOf: buffer[0..<n])
+            // Auth comes from the headers, so an unauthorized sender is dropped before its body is read.
+            if !headChecked, let head = HookHTTPRequest.parseHead(data) {
+                guard authorizedSession(head) != nil else { return .forbidden }
+                headChecked = true
+            }
+        }
+    }
+
     private func reply(_ client: Int32, status: String) {
         let head = Data("HTTP/1.1 \(status)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
         _ = head.withUnsafeBytes { write(client, $0.baseAddress, head.count) }
@@ -122,8 +158,8 @@ final class HookServer: @unchecked Sendable {
 }
 
 /// The parts of an HTTP/1.1 request the hook listener needs. Bodies must have a Content-Length.
-struct HookHTTPRequest {
-    enum Parse {
+struct HookHTTPRequest: Equatable {
+    enum Parse: Equatable {
         case incomplete, invalid, complete(HookHTTPRequest)
     }
 

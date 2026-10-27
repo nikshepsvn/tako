@@ -176,6 +176,8 @@ final class SessionStore: ObservableObject {
     private var lastOutline: [SessionOutline] = []
     private var persistWork: DispatchWorkItem?
     let notifier = AttentionNotifier()
+    /// Receipts for queued messages, gathered per sender.
+    var messageReceipts = MessageReceipts()
     /// Previews and tests post no banners.
     private(set) var notifiesUser = true
     /// Previews and tests write nothing to disk: the test host shares the app's support folder.
@@ -475,6 +477,7 @@ final class SessionStore: ObservableObject {
         // Its workspace's dev server goes too: restored without it, it would hold the port forever.
         if session.kind.isAgent { (browsers(ownedBy: session) + servers(ownedBy: session)).forEach(close) }
         dropAllApprovals(for: session)
+        messagesDropped(from: session, reason: "@\(session.label) was closed")
         rememberClosed(session)
         if session.spec.labelSource == .user || session.spec.labelSource == nil {
             reservedLabels[session.label] = Date()
@@ -636,25 +639,25 @@ final class SessionStore: ObservableObject {
             // Handed to Sumi: it hears instead, and the user only if it doesn't answer.
             if sumiTakesWait(session, reason: reason) { break }
             if !isVisible { session.unread = true }
-            notifier.post(session: session, title: "@\(session.label) needs you", body: reason, foreground: !isVisible)
+            notifier.post(session: session, title: "@\(session.label) needs you", body: reason, foreground: !isVisible, kind: .needsYou)
         case .idle where previous == .working && session.kind.isAgent && raceFinished(session):
             // Every agent on this task is done: one notification for the race, not one each.
             let all = [session] + raceSiblings(of: session)
             let changed = all.filter { ($0.diffStat?.files ?? 0) > 0 }.count
             notifier.post(session: session, title: "All \(all.count) agents finished",
                           body: "\(changed) changed files. Compare them side by side, then right-click the best → Pick This One.",
-                          foreground: !NSApp.isActive)
+                          foreground: !NSApp.isActive, kind: .finished)
         case .idle where previous == .working && session.kind.isAgent:
             if !isVisible {
                 session.unread = true
-                notifier.post(session: session, title: "@\(session.label) finished", body: session.summary ?? "Turn complete", foreground: false)
+                notifier.post(session: session, title: "@\(session.label) finished", body: session.summary ?? "Turn complete", foreground: false, kind: .finished)
             }
         case .failed(let reason):
             if !isVisible { session.unread = true }
-            notifier.post(session: session, title: "@\(session.label) failed", body: reason, foreground: !isVisible)
+            notifier.post(session: session, title: "@\(session.label) failed", body: reason, foreground: !isVisible, kind: .failed)
         case .exited(let code) where session.kind == .server && code != 0:
             session.unread = true
-            notifier.post(session: session, title: "@\(session.label) crashed", body: "exit \(code)", foreground: true)
+            notifier.post(session: session, title: "@\(session.label) crashed", body: "exit \(code)", foreground: true, kind: .crashed)
         default:
             break
         }

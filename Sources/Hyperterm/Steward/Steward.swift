@@ -45,6 +45,8 @@ struct MachineStatus: Codable, Equatable {
     /// Tako's Chromium, shared by every browser tile.
     var browserProcesses = 0
     var browserBytes: UInt64 = 0
+    /// Tako's own footprint, browsers excluded.
+    var takoBytes: UInt64 = 0
 }
 
 /// Keeps the Mac responsive while agents run, without an LLM: measures each session's process
@@ -84,7 +86,7 @@ final class Steward: ObservableObject {
         }
     }
     /// Open escalations, one per session and kind; each clears when its condition does.
-    var escalations: [Escalation] { escalationTracker.active }
+    var escalations: [Escalation] { escalationTracker.active + [tako.warning].compactMap { $0 } }
     /// Called once per new escalation. The steward never acts on it.
     var onEscalation: ((Escalation) -> Void)?
     /// Called once when an idle, hidden session has been quiet for `sleepAfter`.
@@ -106,6 +108,9 @@ final class Steward: ObservableObject {
     private var workMeters: [UUID: CPUMeter] = [:]
     private var lowered: [UUID: Set<pid_t>] = [:]
     private var escalationTracker = EscalationTracker()
+    private var tako = TakoFootprint()
+    /// Tako's own footprint at the last tick, for the inspector and `ht machine`.
+    @Published private(set) var takoBytes: UInt64 = 0
     private var sleepTracker = SleepTracker()
     private var heavy = HeavyQueue(capacity: 1)
     private var launches: [() -> Void] = []
@@ -147,6 +152,7 @@ final class Steward: ObservableObject {
         let thermal = Thermal(ProcessInfo.processInfo.thermalState)
         let focused = focusedIDs(store)
         let awake = heldAwakeIDs(store)
+        let pressure = MemoryPressure.current()
         var next: [UUID: Sample] = [:]
         for session in store.sessions {
             let key = session.id.uuidString
@@ -175,8 +181,9 @@ final class Steward: ObservableObject {
             next[session.id] = Sample(footprint: footprint, cpuPercent: cpu, band: band, lowered: isLowered)
 
             let agentIdle = session.kind.isAgent && session.state == .idle && session.runningSubagents.isEmpty
+            // Children's CPU, not the CLI's: an idle Claude redrawing its screen isn't a runaway.
             for escalation in escalationTracker.update(sessionID: key, label: session.label, footprint: footprint,
-                                                       cpu: cpu, agentIdle: agentIdle, now: now) {
+                                                       cpu: workCPU, agentIdle: agentIdle, pressure: pressure, now: now) {
                 onEscalation?(escalation)
             }
             let sleepBand = StewardRules.band(state: session.state, isAgent: true, focused: awake.contains(session.id))
@@ -187,7 +194,15 @@ final class Steward: ObservableObject {
         let live = Set(store.sessions.map(\.id))
         for id in Set(trees.keys).union(meters.keys).subtracting(live) { forget(id) }
         if samples != next { samples = next }
+        measureTako(now: now)
         conditionsChanged()
+    }
+
+    private func measureTako(now: Date) {
+        if let warning = tako.update(TakoFootprint.current(), now: now) { onEscalation?(warning) }
+        // Published in 64 MB steps so the readout doesn't redraw on every tick.
+        let rounded = (tako.bytes >> 26) << 26
+        if takoBytes != rounded { takoBytes = rounded }
     }
 
     /// Between ticks: keeps each sampled session's tree current, so children started since the
@@ -368,6 +383,7 @@ final class Steward: ObservableObject {
                              heavyWaiting: heavy.waiting, sessions: sessions)
         status.browserProcesses = browser.count
         status.browserBytes = browser.footprint
+        status.takoBytes = tako.bytes
         return status
     }
 }

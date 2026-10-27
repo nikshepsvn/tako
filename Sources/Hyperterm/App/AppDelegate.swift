@@ -67,6 +67,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self, let session = self.store.sessions.first(where: { $0.id == id }) else { return }
             _ = self.store.answer(session, answer)
         }
+        // In view means on the canvas of the key window; a banner would repeat what they see.
+        store.notifier.isLooking = { [weak store] session in
+            NSApp.keyWindow != nil && store?.userIsLooking(at: session) == true
+        }
         store.notifier.requestAuthorization()
         updateQuickAskHotKey()
         NotificationCenter.default.addObserver(forName: .quickAskSettingChanged, object: nil, queue: .main) { [weak self] _ in

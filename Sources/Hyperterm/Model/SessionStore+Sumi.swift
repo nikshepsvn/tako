@@ -391,7 +391,7 @@ extension SessionStore {
     private func restartSumiForPhone(_ exited: TerminalSession, now: Date = Date()) {
         sumiRestarts = sumiRestarts.filter { now.timeIntervalSince($0) < Self.sumiRestartWindow }
         guard sumiRestarts.count < Self.sumiRestartLimit else {
-            notifier.post(session: exited, title: "Sumi keeps stopping", body: "Phone Mode can't reach your agents until Sumi runs again. Open it on the Mac.", foreground: true)
+            notifier.post(session: exited, title: "Sumi keeps stopping", body: "Phone Mode can't reach your agents until Sumi runs again. Open it on the Mac.", foreground: true, kind: .crashed)
             return
         }
         sumiRestarts.append(now)
@@ -412,7 +412,9 @@ extension SessionStore {
         switch session.state {
         // Background subagents outlive the turn; their last SubagentStop reports it instead.
         case .idle where previous == .working && session.runningSubagents.isEmpty:
-            let summary = Self.turnSummary(session) ?? "turn complete (read_terminal for its reply)"
+            // The whole closing message (bounded), so Sumi needn't read_terminal for the rest.
+            let summary = session.lastReply.flatMap { FinalReply.excerpt($0) } ?? Self.turnSummary(session)
+                ?? "turn complete (read_terminal for its reply)"
             kind = .finished(summary + (finishFacts(session).map { " [\($0)]" } ?? ""))
         case .failed(let reason): kind = .failed(reason)
         case .exited: kind = .exited
@@ -493,12 +495,22 @@ struct SumiEvent: Equatable {
         case waitingLong(String, minutes: Int)
         /// Tako approved a handled session's request as the user always does in that project.
         case autoApproved(String)
+        /// What became of a message Sumi sent that had to wait in a queue.
+        case messageReceipt(String)
     }
 
     var label: String
     var kind: Kind
     /// The note watch_terminal left for this terminal.
     var note: String?
+
+    /// The same event with a finished reply cut to `limit` characters.
+    func trimmed(to limit: Int) -> SumiEvent {
+        guard case .finished(let reply) = kind, reply.count > limit else { return self }
+        var copy = self
+        copy.kind = .finished(FinalReply.excerpt(reply, limit: limit) ?? reply)
+        return copy
+    }
 
     var line: String {
         var line = "@\(label) "
@@ -533,6 +545,7 @@ struct SumiEvent: Equatable {
         case .failed(let reason): line += "failed: " + reason
         case .exited: line += "exited"
         case .steward(let warning): line += "steward warning: " + warning
+        case .messageReceipt(let receipt): return receipt
         }
         if let note { line += " (your note: \(note))" }
         return line
@@ -591,7 +604,9 @@ struct SumiDigest {
         if events.count == 1 {
             text += events[0].line
         } else {
-            text += "\(events.count) updates: " + events.enumerated().map { "[\($0 + 1)] \($1.line)" }.joined(separator: " ")
+            // Many finishes in one digest share a budget, so the typed message stays bounded.
+            let share = FinalReply.share(of: events.filter { if case .finished = $0.kind { return true } else { return false } }.count)
+            text += "\(events.count) updates: " + events.enumerated().map { "[\($0 + 1)] \($1.trimmed(to: share).line)" }.joined(separator: " ")
         }
         return text.split(whereSeparator: \.isNewline).joined(separator: " ")
     }
