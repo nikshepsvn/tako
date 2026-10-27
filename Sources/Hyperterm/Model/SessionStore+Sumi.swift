@@ -406,7 +406,9 @@ extension SessionStore {
         switch session.state {
         // Background subagents outlive the turn; their last SubagentStop reports it instead.
         case .idle where previous == .working && session.runningSubagents.isEmpty:
-            let summary = Self.turnSummary(session) ?? "turn complete (read_terminal for its reply)"
+            // The whole closing message (bounded), so Sumi needn't read_terminal for the rest.
+            let summary = session.lastReply.flatMap { FinalReply.excerpt($0) } ?? Self.turnSummary(session)
+                ?? "turn complete (read_terminal for its reply)"
             kind = .finished(summary + (finishFacts(session).map { " [\($0)]" } ?? ""))
         case .failed(let reason): kind = .failed(reason)
         case .exited: kind = .exited
@@ -493,6 +495,14 @@ struct SumiEvent: Equatable {
     var kind: Kind
     /// The note watch_terminal left for this terminal.
     var note: String?
+
+    /// The same event with a finished reply cut to `limit` characters.
+    func trimmed(to limit: Int) -> SumiEvent {
+        guard case .finished(let reply) = kind, reply.count > limit else { return self }
+        var copy = self
+        copy.kind = .finished(FinalReply.excerpt(reply, limit: limit) ?? reply)
+        return copy
+    }
 
     var line: String {
         var line = "@\(label) "
@@ -585,7 +595,9 @@ struct SumiDigest {
         if events.count == 1 {
             text += events[0].line
         } else {
-            text += "\(events.count) updates: " + events.enumerated().map { "[\($0 + 1)] \($1.line)" }.joined(separator: " ")
+            // Many finishes in one digest share a budget, so the typed message stays bounded.
+            let share = FinalReply.share(of: events.filter { if case .finished = $0.kind { return true } else { return false } }.count)
+            text += "\(events.count) updates: " + events.enumerated().map { "[\($0 + 1)] \($1.trimmed(to: share).line)" }.joined(separator: " ")
         }
         return text.split(whereSeparator: \.isNewline).joined(separator: " ")
     }

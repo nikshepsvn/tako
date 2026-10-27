@@ -85,6 +85,7 @@ extension SessionStore {
             // Its hooks already reported the turn; notify stands in only when hooks are off.
             if session.reportsTurnsByHook { return }
             if let last = json["last-assistant-message"] as? String {
+                session.lastReply = last
                 session.summary = summarize(last)
                 session.record(.done, summarize(last) ?? "Turn complete")
             }
@@ -125,6 +126,7 @@ extension SessionStore {
             // notification), isn't the user's turn: no checkpoint, and the card keeps its summary.
             session.turnIsMessage = !(prompt.map(PromptOrigin.init) ?? .user).isUser
             notifier.turnStarted(session)
+            session.lastReply = nil
             // A turn already opened before the hooks could report it isn't opened twice.
             if !session.turnIsMessage && !session.turnOpenedByGuess { checkpoint(session, phase: .start, prompt: prompt ?? "Turn") }
             session.turnOpenedByGuess = false
@@ -157,6 +159,7 @@ extension SessionStore {
             session.activity = nil
             if !session.turnIsMessage { checkpoint(session, phase: .end, prompt: "") }
             if let last = json["last_assistant_message"] as? String {
+                session.lastReply = last
                 session.summary = summarize(last)
                 session.record(.done, summarize(last, limit: 200) ?? "Turn complete")
             }

@@ -100,6 +100,9 @@ final class TerminalSession: ObservableObject, Identifiable {
     var lastHookAt = Date.distantPast
     /// The current turn was started by another agent's message, not the user.
     var turnIsMessage = false
+    /// The agent's whole closing message for its last turn (Stop's last_assistant_message);
+    /// `summary` holds only its first line. Cleared when a turn starts.
+    var lastReply: String?
     /// Its CLI's prompt and stop hooks report turns (a Codex with hooks on), so turns aren't
     /// guessed from work starting.
     var reportsTurnsByHook = false
