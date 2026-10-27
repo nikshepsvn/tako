@@ -62,14 +62,14 @@ jobs:
       - name: Cache Chromium
         uses: actions/cache@v4
         with:
-          path: ~/Library/Caches/Hyperterm/cef
+          path: ~/Library/Caches/Tako/cef
           key: cef-${{ hashFiles('scripts/embed-cef.sh') }}
 
       - name: Build
         run: |
           xcodegen generate
           set -o pipefail
-          xcodebuild -project Hyperterm.xcodeproj -scheme Hyperterm -configuration Debug \
+          xcodebuild -project Tako.xcodeproj -scheme Tako -configuration Debug \
             -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO build 2>&1 \
             | tee build.log | grep -E "error:|warning: .*Sources/|BUILD (SUCCEEDED|FAILED)" || true
           grep -q "BUILD SUCCEEDED" build.log
@@ -77,10 +77,10 @@ jobs:
       - name: Test
         env:
           # The snapshot test renders the real views to PNGs for visual review.
-          TEST_RUNNER_HYPERTERM_CAPTURE_UI: ${{ github.workspace }}/captures
+          TEST_RUNNER_TAKO_CAPTURE_UI: ${{ github.workspace }}/captures
         run: |
           set -o pipefail
-          xcodebuild -project Hyperterm.xcodeproj -scheme Hyperterm -configuration Debug \
+          xcodebuild -project Tako.xcodeproj -scheme Tako -configuration Debug \
             -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO test 2>&1 \
             | tee test.log | grep -E "error:|Test Case .* failed|Executed|TEST (SUCCEEDED|FAILED)" || true
           grep -q "TEST SUCCEEDED" test.log

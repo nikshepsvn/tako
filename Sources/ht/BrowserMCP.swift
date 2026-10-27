@@ -456,7 +456,7 @@ private final class BrowserProxy: @unchecked Sendable {
         var untagged = 0
         for page in pageNumbers(in: listing) {
             // Only reads the tag, so there's no DOM to wait for.
-            let reply = hiddenCall("evaluate_script", ["pageId": page, "function": "() => window.__hyperterm ?? null",
+            let reply = hiddenCall("evaluate_script", ["pageId": page, "function": "() => window.__tako ?? null",
                                                        "waitForStableDom": false], timeout: 5)
             if let reply, let tag = pageTag(in: reply) { map[page] = tag; continue }
             // Navigation wipes the tag until the load ends; keep what the page was known as.

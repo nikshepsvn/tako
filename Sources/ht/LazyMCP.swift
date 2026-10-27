@@ -68,7 +68,7 @@ func runLazyMCPConfig(_ args: [String]) -> Never {
     exit(0)
 }
 
-/// The path this ht was started by (the wrappers use ~/.hyperterm/bin/ht, which survives the app moving).
+/// The path this ht was started by (the wrappers use ~/.tako/bin/ht, which survives the app moving).
 private func selfPath() -> String {
     let invoked = CommandLine.arguments[0]
     if invoked.contains("/") {
