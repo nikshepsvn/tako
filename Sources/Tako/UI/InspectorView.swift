@@ -1032,6 +1032,10 @@ private struct InfoView: View {
                         }
                     }
                 }
+                if session.kind.isAgent {
+                    TeamBoardSection(session: session, store: store)
+                    RememberedApprovalsSection(session: session, store: store)
+                }
                 section("Actions") {
                     VStack(spacing: 0) {
                         if session.kind != .browser {
@@ -1062,6 +1066,7 @@ private struct InfoView: View {
                     }
                     .padding(.horizontal, -Space.s)
                 }
+                TakoHealthSection(steward: .shared, store: store)
             }
             .padding(Space.m)
             .font(Typeface.callout)
