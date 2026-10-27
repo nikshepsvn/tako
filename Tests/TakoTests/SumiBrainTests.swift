@@ -132,7 +132,7 @@ final class SumiBrainTests: XCTestCase {
 
     func testTurnSummarySkipsPromptEchoesAndChannelTags() {
         let api = agent("api")
-        api.summary = "› <channel source=\"hyperterm\">"
+        api.summary = "› <channel source=\"tako\">"
         XCTAssertNil(SessionStore.turnSummary(api))
         api.record(.done, "Shipped the fix")
         XCTAssertEqual(SessionStore.turnSummary(api), "Shipped the fix")

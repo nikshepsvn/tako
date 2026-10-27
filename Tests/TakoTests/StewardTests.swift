@@ -202,7 +202,7 @@ final class StewardTests: XCTestCase {
 
     func testTheAgentCLIAndItsHelpersAreNotWork() {
         XCTAssertTrue(StewardRules.isAgentMachinery(name: "2.1.289", path: "/Users/u/.local/share/claude/versions/2.1.289"))
-        XCTAssertTrue(StewardRules.isAgentMachinery(name: "ht", path: "/Users/u/.hyperterm/bin/ht"))
+        XCTAssertTrue(StewardRules.isAgentMachinery(name: "ht", path: "/Users/u/.tako/bin/ht"))
         XCTAssertFalse(StewardRules.isAgentMachinery(name: "node", path: "/opt/homebrew/bin/node"))
     }
 }

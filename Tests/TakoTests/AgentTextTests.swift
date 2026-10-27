@@ -5,7 +5,7 @@ final class AgentTextTests: XCTestCase {
     func testDescribesToolCalls() {
         XCTAssertEqual(AgentText.describeTool(name: "Bash", input: ["command": "pnpm test\n--watch"], cwd: nil), "Bash: pnpm test")
         XCTAssertEqual(AgentText.describeTool(name: "Edit", input: ["file_path": "/repo/src/a.ts"], cwd: "/repo"), "Edit: src/a.ts")
-        XCTAssertEqual(AgentText.describeTool(name: "mcp__hyperterm__send_message", input: [:], cwd: nil), "hyperterm: send_message")
+        XCTAssertEqual(AgentText.describeTool(name: "mcp__tako__send_message", input: [:], cwd: nil), "tako: send_message")
         XCTAssertEqual(AgentText.describeTool(name: "TodoWrite", input: [:], cwd: nil), "TodoWrite")
     }
 

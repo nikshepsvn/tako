@@ -13,7 +13,7 @@ extension SessionStore {
                                  "session_history", "reopen_session", "machine_status", "set_policy", "detach_terminals",
                                  "handle_waiting", "stop_handling", "answer_prompt", "phone_mode",
                                  "choose_option", "trust_folder", "sign_in", "interrupt_agent"]
-        .map { "mcp__hyperterm__" + $0 }
+        .map { "mcp__tako__" + $0 }
 
     /// Where Sumi runs. Its own folder, trusted once: Claude Code asks to trust the home
     /// folder again on every launch, and Sumi reaches every project with absolute paths.

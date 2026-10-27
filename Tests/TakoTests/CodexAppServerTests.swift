@@ -144,7 +144,7 @@ final class CodexAppServerTests: XCTestCase {
         XCTAssertNil(box.responses.first?.text, "released with no decision, so Codex asks its app-server clients")
         XCTAssertFalse(session.hasHookApproval)
         // MCP tool calls aren't mapped over the app-server: their hook still holds.
-        let mcp = #"{"session_id":"01a110ad-7491-7af1-b340-da8605e1c16e","hook_event_name":"PermissionRequest","tool_name":"mcp__hyperterm__list_sessions","tool_input":{}}"#
+        let mcp = #"{"session_id":"01a110ad-7491-7af1-b340-da8605e1c16e","hook_event_name":"PermissionRequest","tool_name":"mcp__tako__list_sessions","tool_input":{}}"#
         store.registerApproval(for: session, source: "codex", payload: mcp) { box.responses.append($0) }
         XCTAssertTrue(session.hasHookApproval)
     }
@@ -167,14 +167,14 @@ final class CodexAppServerTests: XCTestCase {
     }
 
     func testWrapperRunsCodexBehindItsAppServerWithTheOldPathAsFallback() {
-        let wrapper = CodexAdapter.wrapperScript(ht: "/Users/me/.hyperterm/bin/ht")
+        let wrapper = CodexAdapter.wrapperScript(ht: "/Users/me/.tako/bin/ht")
         XCTAssertTrue(wrapper.contains("exec codex app-server --listen ws://127.0.0.1:0 \\\n    --ws-auth capability-token --ws-token-file \"$RUN/token\" \\\n  -c 'hooks.SessionStart="), wrapper)
         XCTAssertTrue(wrapper.contains("codex --remote \"$URL\" --remote-auth-token-env TAKO_CODEX_TOKEN \\\n  -c 'tui.notification_method=\"osc9\"'"), wrapper)
         XCTAssertTrue(wrapper.contains("\"$HT_DIR/bin/ht\" hook codex-app-server"), wrapper)
         XCTAssertTrue(wrapper.contains("exec codex --no-daemon \\\n  -c 'hooks.SessionStart="), wrapper)
         // Hooks, notify and MCP servers go to the process running the agent, both ways.
         XCTAssertEqual(wrapper.components(separatedBy: "hooks.PermissionRequest=").count - 1, 2)
-        XCTAssertEqual(wrapper.components(separatedBy: "mcp_servers.hyperterm.command=").count - 1, 2)
+        XCTAssertEqual(wrapper.components(separatedBy: "mcp_servers.tako.command=").count - 1, 2)
         XCTAssertEqual(wrapper.components(separatedBy: "tui.notification_method").count - 1, 2)
     }
 }

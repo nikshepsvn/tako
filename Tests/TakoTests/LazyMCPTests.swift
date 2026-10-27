@@ -4,7 +4,7 @@ import XCTest
 /// The user's own MCP servers wrapped in `ht mcp-lazy`: the config rewrites, and the proxy itself
 /// against a fake server (python3) in a temporary HT_HOME.
 final class LazyMCPTests: XCTestCase {
-    private let ht = "/Users/me/.hyperterm/bin/ht"
+    private let ht = "/Users/me/.tako/bin/ht"
 
     // MARK: - Claude
 

@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         TerminalSessionFactory.store = store
         startHookServer()
         AgentIntegration.install()
+        Task { await ChannelsMigration.runIfNeeded() }
         NSApp.mainMenu = MainMenu.build(target: self)
 
         let controller = MainWindowController(store: store)
@@ -374,14 +375,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         alert.messageText = enabling ? "Deliver messages via Claude channels?" : "Stop using Claude channels?"
         alert.informativeText = enabling
-            ? "Messages from other agents arrive in Claude as channel events instead of typed text. This registers Tako in your Claude config (claude mcp add --scope user hyperterm), and Claude asks you to confirm the development channel when each session starts. Applies to new or restarted sessions."
-            : "Removes Tako from your Claude config (claude mcp remove --scope user hyperterm). Messages go back to being typed in."
+            ? "Messages from other agents arrive in Claude as channel events instead of typed text. This registers Tako in your Claude config (claude mcp add --scope user tako), and Claude asks you to confirm the development channel when each session starts. Applies to new or restarted sessions."
+            : "Removes Tako from your Claude config (claude mcp remove --scope user tako). Messages go back to being typed in."
         alert.addButton(withTitle: enabling ? "Turn On" : "Turn Off")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let command = enabling
-            ? "claude mcp add --scope user hyperterm \(shellQuote(AgentIntegration.htPath)) mcp"
-            : "claude mcp remove --scope user hyperterm"
+            ? "claude mcp add --scope user tako \(shellQuote(AgentIntegration.htPath)) mcp"
+            : "claude mcp remove --scope user tako"
         Task { @MainActor in
             let output = await Task.detached(priority: .userInitiated) {
                 runProcess("/bin/zsh", ["-lic", command], timeout: 30)
@@ -394,6 +395,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
             SessionStore.channelsEnabled = enabling
+            // Registered under the new name already; nothing for the launch migration to redo.
+            if enabling { UserDefaults.standard.set(true, forKey: ChannelsMigration.doneKey) }
             sender.state = enabling ? .on : .off
         }
     }

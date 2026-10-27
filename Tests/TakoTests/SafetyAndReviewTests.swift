@@ -76,7 +76,7 @@ final class SafetyAndReviewTests: XCTestCase {
 
           Please use --channels to run a list of approved channels.
 
-          Channels: server:hyperterm
+          Channels: server:tako
 
           ❯ 1. I am using this for local development
             2. Exit
@@ -88,7 +88,7 @@ final class SafetyAndReviewTests: XCTestCase {
         XCTAssertFalse(PromptScreen.hasDevChannelWarning(warning
             .replacingOccurrences(of: "❯ 1.", with: "  1.").replacingOccurrences(of: "  2. Exit", with: "❯ 2. Exit")))
         // Someone else's channel isn't Tako's to accept.
-        XCTAssertFalse(PromptScreen.hasDevChannelWarning(warning.replacingOccurrences(of: "server:hyperterm", with: "server:other")))
+        XCTAssertFalse(PromptScreen.hasDevChannelWarning(warning.replacingOccurrences(of: "server:tako", with: "server:other")))
         XCTAssertFalse(PromptScreen.hasDevChannelWarning(claudeTrust))
     }
 

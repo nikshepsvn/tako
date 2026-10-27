@@ -12,27 +12,28 @@ final class CodexParityTests: XCTestCase {
         // -c 'hooks.Stop=[{hooks=[{type="command",command="/x/ht hook codex"}]}]' (timeout defaults to 600).
         XCTAssertEqual(CodexAdapter.hookHash(event: "stop", command: "/x/ht hook codex", timeout: 600),
                        "sha256:18d58b48f8dadaaf0bdc0383269f6a7002e519a836c06baa95ef864bf553da2b")
-        // And for two of Tako's own, exactly as the wrapper passes them.
+        // And for two of Tako's own, exactly as the wrapper passes them. The hashes were captured
+        // with ht at its pre-rename path, which they cover, so the fixture keeps that path.
         let overrides = CodexAdapter.hookOverrides(ht: "/Users/me/.hyperterm/bin/ht")
         XCTAssertTrue(overrides.last?.contains(#""/<session-flags>/config.toml:permission_request:0:0"={trusted_hash="sha256:3ab01255868a1f1eb7f19809798b7187b306c2c189a41da568d4a3194c2f817a"}"#) == true)
         XCTAssertTrue(overrides.last?.contains(#""/<session-flags>/config.toml:interrupt:0:0"={trusted_hash="sha256:e7a08cca87be4cce9323b4ef583bcce78821f49cd4f3f3f90ccd0f9a416d8e72"}"#) == true)
     }
 
     func testEveryHookIsPassedWithItsOwnTrust() throws {
-        let overrides = CodexAdapter.hookOverrides(ht: "/Users/me/.hyperterm/bin/ht")
+        let overrides = CodexAdapter.hookOverrides(ht: "/Users/me/.tako/bin/ht")
         let values = stride(from: 1, to: overrides.count, by: 2).map { overrides[$0] }
         XCTAssertTrue(stride(from: 0, to: overrides.count, by: 2).allSatisfy { overrides[$0] == "-c" })
         let hooks = values.filter { !$0.hasPrefix("hooks.state=") }
         XCTAssertEqual(hooks.map { String($0.prefix { $0 != "=" }) },
                        ["hooks.SessionStart", "hooks.UserPromptSubmit", "hooks.PreToolUse", "hooks.PostToolUse",
                         "hooks.PermissionRequest", "hooks.Stop", "hooks.Interrupt"])
-        XCTAssertTrue(hooks[4].contains(#"command="/Users/me/.hyperterm/bin/ht permission codex",timeout=600"#), hooks[4])
+        XCTAssertTrue(hooks[4].contains(#"command="/Users/me/.tako/bin/ht permission codex",timeout=600"#), hooks[4])
         let state = try XCTUnwrap(values.last)
         XCTAssertTrue(state.hasPrefix("hooks.state={"))
         for key in ["session_start", "user_prompt_submit", "pre_tool_use", "post_tool_use", "permission_request", "stop", "interrupt"] {
             XCTAssertTrue(state.contains(#""/<session-flags>/config.toml:\#(key):0:0"={trusted_hash="sha256:"#), key)
         }
-        let wrapper = CodexAdapter.wrapperScript(ht: "/Users/me/.hyperterm/bin/ht")
+        let wrapper = CodexAdapter.wrapperScript(ht: "/Users/me/.tako/bin/ht")
         XCTAssertTrue(wrapper.contains("exec codex --no-daemon \\\n  -c 'hooks.SessionStart="), wrapper)
         XCTAssertFalse(wrapper.contains("bypass-hook-trust"))
     }

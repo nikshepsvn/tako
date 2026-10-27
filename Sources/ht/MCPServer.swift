@@ -28,7 +28,7 @@ func runMCPServer() -> Never {
             reply(id: id, result: [
                 "protocolVersion": version,
                 "capabilities": ["tools": [:], "experimental": ["claude/channel": [:]]],
-                "serverInfo": ["name": "hyperterm", "version": "0.1.0"],
+                "serverInfo": ["name": "tako", "version": "0.1.0"],
                 "instructions": isSumi ? sumiInstructions : instructions(selfLabel: selfLabel, me: me),
             ])
         case "ping":
@@ -711,7 +711,7 @@ private func startChannelLoop() {
             }
             for message in response.messages ?? [] {
                 write(["jsonrpc": "2.0", "method": "notifications/claude/channel",
-                       "params": ["content": message, "meta": ["source": "hyperterm"]]])
+                       "params": ["content": message, "meta": ["source": "tako"]]])
             }
         }
     }

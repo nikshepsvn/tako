@@ -358,3 +358,27 @@ struct ApprovalMemory: Codable, Equatable {
             .map { "  - \($0.key): \(Self.precedent($0.value))" }.joined(separator: "\n")
     }
 }
+
+extension ApprovalMemory {
+    private enum DecodingKeys: String, CodingKey { case projects }
+
+    /// Answers learned before the rename are keyed on the old MCP server name
+    /// (`mcp__hyperterm__send_message`); they're carried over to `mcp__tako__`, which is what
+    /// agents ask for now. A key already learned under the new name wins.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: DecodingKeys.self)
+        let stored = try container.decodeIfPresent([String: [String: Record]].self, forKey: .projects) ?? [:]
+        projects = stored.mapValues(Self.renamingLegacyTools)
+    }
+
+    static let legacyToolPrefix = "mcp__hyperterm__", toolPrefix = "mcp__tako__"
+
+    static func renamingLegacyTools(_ keys: [String: Record]) -> [String: Record] {
+        var renamed = keys.filter { !$0.key.hasPrefix(legacyToolPrefix) }
+        for (key, record) in keys where key.hasPrefix(legacyToolPrefix) {
+            let current = toolPrefix + key.dropFirst(legacyToolPrefix.count)
+            if renamed[current] == nil { renamed[current] = record }
+        }
+        return renamed
+    }
+}

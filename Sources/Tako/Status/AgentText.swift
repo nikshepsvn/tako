@@ -2,7 +2,7 @@ import Foundation
 
 /// Human-readable lines from agent hook payloads and terminal screens.
 enum AgentText {
-    /// "Bash: pnpm test", "Edit: src/auth/refresh.ts", "hyperterm: send_message".
+    /// "Bash: pnpm test", "Edit: src/auth/refresh.ts", "tako: send_message".
     static func describeTool(name: String, input: [String: Any], cwd: String?) -> String {
         func path(_ key: String) -> String? {
             guard let raw = input[key] as? String else { return nil }

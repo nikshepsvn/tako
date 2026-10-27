@@ -4,8 +4,10 @@ import Foundation
 /// The user's own stdio MCP servers, rewritten so each agent starts its own copy through
 /// `ht mcp-lazy` on first use instead of at launch. The user's config files are only read.
 enum LazyMCP {
-    /// Names Tako's own MCP servers already use.
-    static let reservedNames: Set<String> = ["hyperterm", "browser"]
+    /// Names Tako's own MCP servers already use. "hyperterm" was the main server's name before
+    /// the rename, and Claude channels registered it under that name in the user's config, so a
+    /// server called that is ours too and must never shadow `tako`.
+    static let reservedNames: Set<String> = ["tako", "hyperterm", "browser"]
 
     static var cacheDirectory: URL {
         ControlPaths.supportDirectory.appendingPathComponent("mcp-cache", isDirectory: true)

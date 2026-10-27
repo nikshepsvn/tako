@@ -1073,7 +1073,7 @@ enum PromptScreen {
     /// option ("I am using this for local development") selected.
     static func hasDevChannelWarning(_ screen: String) -> Bool {
         let lower = screen.lowercased()
-        guard lower.contains("loading development channels"), lower.contains("server:hyperterm"),
+        guard lower.contains("loading development channels"), lower.contains("server:tako"),
               let first = options(screen).first,
               first.number == 1, first.text.lowercased().hasPrefix("i am using this for local development") else { return false }
         // Return must land on option 1, never "Exit".

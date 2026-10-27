@@ -31,9 +31,9 @@ struct CodexAdapter: AgentAdapter {
         // For whichever process runs the agent: its app-server, or Codex itself.
         let tako = hooks + "\n" + #"""
           -c "notify=[\"$HT_DIR/bin/ht\",\"hook\",\"codex-notify\"]" \
-          -c "mcp_servers.hyperterm.command=\"$HT_DIR/bin/ht\"" \
-          -c 'mcp_servers.hyperterm.args=["mcp"]' \
-          -c 'mcp_servers.hyperterm.tool_timeout_sec=1600' \
+          -c "mcp_servers.tako.command=\"$HT_DIR/bin/ht\"" \
+          -c 'mcp_servers.tako.args=["mcp"]' \
+          -c 'mcp_servers.tako.tool_timeout_sec=1600' \
           -c "mcp_servers.browser.command=\"$HT_DIR/bin/ht\"" \
           -c 'mcp_servers.browser.args=["browser-mcp","\#(AgentBrowser.preferredPort)"]' \
         """#
