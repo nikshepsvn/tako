@@ -31,6 +31,8 @@ final class SessionStore: ObservableObject {
     /// Terminals Sumi waits on, each with the note it left for when that one finishes.
     var sumiWatches: [UUID: String] = [:]
     var sumiDigest = SumiDigest()
+    /// Folder trust for Sumi's agents, asked once per folder (SessionStore+Startup).
+    let startupGate = StartupGate()
     /// Sumi's plan, memory and learned approvals (SumiBrain), on disk beside the sessions.
     lazy var sumiBrain = SumiBrain(directory: persists ? ControlPaths.supportDirectory : nil)
     var sumiDigestRetryScheduled = false

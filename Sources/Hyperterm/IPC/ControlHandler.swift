@@ -461,31 +461,78 @@ struct ControlHandler {
             reply(.failure("count must be 1–\(sumiStartCap)"))
             return
         }
+        let path = expandTilde(folder)
+        let launch = { [self] (autoTrust: Bool) in
+            launchForSumi(request, kind: kind, task: task, folder: path, count: count, autoTrust: autoTrust, reply: reply)
+        }
+        // A folder the CLI doesn't trust stops every agent at its trust prompt before any hook
+        // runs: ask the user once for the folder, however many start calls name it, then let
+        // Tako answer each agent's prompt.
+        let trusted = FolderTrust.isTrusted(path, kind: kind, account: AccountStore.shared.preferredID(for: kind)) ?? true
+        if trusted { return launch(false) }
+        if store.startupGate.isApproved(path) { return launch(true) }
+        let place = abbreviateHome(path)
+        if request.userApproved == true {
+            if let refusal = store.userRequestRefusal(true) { return reply(.failure(refusal.description)) }
+            store.startupGate.approve(path)
+            return launch(true)
+        }
+        if store.isPhoneModeOn {
+            return reply(.failure("\(kind.displayName) hasn't been told to trust \(place) yet, so the agent would stop at its "
+                + "trust prompt. Ask the user whether to trust it; if they say yes, call start_agent again with user_approved true"))
+        }
+        let store = self.store
+        store.startupGate.whenAnswered(path, ask: { done in
+            store.confirm("Trust \(place) for Sumi's agents?",
+                          "Sumi is starting \(kind.displayName) agents in \(place), a folder \(kind.displayName) hasn't been told to trust. "
+                          + "Trusting lets them read, edit and run files there; Tako answers each agent's trust prompt for you.",
+                          completion: done)
+        }) { approved in
+            approved ? launch(true) : reply(.failure("the user didn't trust \(place), so nothing was started"))
+        }
+    }
+
+    /// Starts the agents, then waits (bounded, `request.wait` seconds) until each reaches its
+    /// prompt, stops on a screen, or exits, so Sumi hears "exited" now instead of finding the
+    /// terminal gone later.
+    private func launchForSumi(_ request: ControlRequest, kind: SessionKind, task: String, folder: String, count: Int,
+                               autoTrust: Bool, reply: @escaping ControlServer.Reply) {
         let base = normalizeLabel(request.label ?? "")
         let isolate = request.worktree ?? true
         let store = self.store
+        let waitSeconds = min(max(request.wait ?? SessionStore.startWaitDefault, 0), SessionStore.startWaitMax)
         // One queued launch per agent: each takes its own steward reservation, so the cap holds
         // for a batch. When anything is held back Sumi hears so right away.
         let batch = LaunchBatch()
         for index in 1...count {
             Steward.shared.enqueueLaunch { Task { @MainActor in
                 var spec = LaunchSpec(label: base.isEmpty || count == 1 ? base : "\(base)-\(index)",
-                                      kind: kind, cwd: expandTilde(folder))
+                                      kind: kind, cwd: folder)
                 if spec.labelSource == .user { spec.labelSource = .agent }
                 spec.options = AppSettings.defaultMode.map { AgentOptions(mode: $0) }
                 let child = await store.launch(spec, select: false, isolateIfPossible: isolate, task: task)
+                if autoTrust { store.startupGate.trustOnStart(child.id) }
                 child.record(.note, "Started by Sumi")
                 batch.started[index] = child
                 // The user asked for them, so each shows as soon as it's up: one is selected, several
                 // starting together land side by side like a project window opened for them.
                 store.showOpenedBySumi([child])
                 guard batch.started.count == count, !batch.replied else { return }
+                batch.replied = true
                 let ordered = batch.started.sorted { $0.key < $1.key }.map(\.value)
                 let labels = ordered.map { "@" + $0.label }.joined(separator: ", ")
-                var response = ControlResponse.success(text: "started \(labels) in \(abbreviateHome(expandTilde(folder)))"
-                    + store.projectBrief(for: folder))
-                response.session = ordered.first?.info()
-                reply(response)
+                let head = "started \(labels) in \(abbreviateHome(folder))"
+                let brief = store.projectBrief(for: folder)
+                @MainActor func send(_ text: String, ok: Bool) {
+                    var response = ok ? ControlResponse.success(text: text) : ControlResponse.failure(text)
+                    response.session = ordered.first?.info()
+                    reply(response)
+                }
+                guard waitSeconds > 0 else { return send(head + brief, ok: true) }
+                store.awaitStartup(ordered, timeout: TimeInterval(waitSeconds)) { lines in
+                    let allExited = lines.allSatisfy { $0.contains(": exited: ") }
+                    send(head + "\n" + lines.joined(separator: "\n") + brief, ok: !allExited)
+                }
             } }
         }
         // The launch tasks run after this returns, so `replied` is set before any can read it.

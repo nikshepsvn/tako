@@ -41,7 +41,8 @@ func runMCPServer() -> Never {
             let name = params["name"] as? String ?? ""
             let arguments = params["arguments"] as? [String: Any] ?? [:]
             // A wait holds its call for minutes; other calls (and pings) go on meanwhile.
-            if agentToolBlocks(name) {
+            // start_agent too: it waits for its agents to come up, and Sumi starts several at once.
+            if agentToolBlocks(name) || name == "start_agent" {
                 Thread.detachNewThread {
                     let (text, isError) = callTool(name, arguments, sessionID: sessionID)
                     reply(id: id, result: ["content": [["type": "text", "text": text]], "isError": isError])
@@ -199,7 +200,7 @@ private let sumiToolDefinitions: [[String: Any]] = toolDefinitions.filter {
 } + [
     [
         "name": "start_agent",
-        "description": "Start Claude Code or Codex agents working on a task in a project folder. Each gets its own git worktree when the folder is a repo, and starts without asking the user (they asked you). count starts several on the same task (labels get -1, -2, …) and shows them in a grid; for different tasks, call once per task.",
+        "description": "Start Claude Code or Codex agents working on a task in a project folder. Each gets its own git worktree when the folder is a repo, and starts without asking the user (they asked you). count starts several on the same task (labels get -1, -2, …) and shows them in a grid; for different tasks, call once per task (calls run side by side). In a folder the CLI doesn't trust yet, Tako asks the user once for the folder (all calls into it share the answer) and then answers each agent's trust prompt; in Phone Mode, ask the user and pass user_approved. The reply comes once each agent is ready, waiting on a screen, or exited (with its last lines), or after wait seconds.",
         "inputSchema": [
             "type": "object",
             "properties": [
@@ -209,6 +210,8 @@ private let sumiToolDefinitions: [[String: Any]] = toolDefinitions.filter {
                 "label": ["type": "string", "description": "Short kebab-case label, e.g. \"checkout-bug\""],
                 "worktree": ["type": "boolean", "description": "Own worktree and branch when the folder is a repo (default true)"],
                 "count": ["type": "integer", "description": "How many agents take this same task, 1–\(sumiStartCap) (default 1)"],
+                "wait": ["type": "integer", "description": "Seconds to wait for each agent to reach its prompt, 0–120 (default 25; 0 replies at once)"],
+                "user_approved": ["type": "boolean", "description": "The user said yes to trusting this folder, in this turn"],
             ],
             "required": ["task", "folder"],
         ],
@@ -535,6 +538,8 @@ private func callTool(_ name: String, _ given: [String: Any], sessionID: String?
         req.worktree = (arguments["worktree"] as? Bool) ?? true
         req.cwd = (arguments["folder"] as? String).map { ($0 as NSString).expandingTildeInPath }
         req.count = arguments["count"] as? Int
+        req.wait = arguments["wait"] as? Int
+        req.userApproved = arguments["user_approved"] as? Bool
     case "arrange_view":
         req = ControlRequest(cmd: .arrange)
         req.text = arguments["layout"] as? String
