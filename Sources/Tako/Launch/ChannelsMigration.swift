@@ -16,12 +16,16 @@ enum ChannelsMigration {
 
     /// Runs off the main thread through a login shell, as turning channels on does. The flag is
     /// only set on success, so a failure (no `claude` on PATH yet) is retried next launch.
+    /// A copy running on its own data ($HT_HOME: a dev build, a soak or smoke run) never touches
+    /// Claude's config: it is the whole Mac's, and a soak build once pointed the user's `tako`
+    /// server at its throwaway ~/.tako-mem/bin/ht, breaking channels for the real app.
     @MainActor @discardableResult
     static func runIfNeeded(defaults: UserDefaults = .standard,
                             channelsEnabled: Bool = SessionStore.channelsEnabled,
+                            isolated: Bool = !(ProcessInfo.processInfo.environment["HT_HOME"] ?? "").isEmpty,
                             htPath: String = AgentIntegration.htPath,
                             run: @escaping @Sendable (String) -> String? = { runProcess("/bin/zsh", ["-lic", $0], timeout: 30) }) async -> Bool {
-        guard channelsEnabled, !defaults.bool(forKey: doneKey) else { return false }
+        guard channelsEnabled, !isolated, !defaults.bool(forKey: doneKey) else { return false }
         let command = command(htPath: htPath)
         let output = await Task.detached(priority: .utility) { run(command) }.value
         guard output != nil else {

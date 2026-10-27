@@ -57,7 +57,7 @@ final class MCPRenameTests: XCTestCase {
     func testChannelsAreReRegisteredOnceAsTako() async {
         let defaults = defaults()
         let commands = Commands()
-        let ran = await ChannelsMigration.runIfNeeded(defaults: defaults, channelsEnabled: true, htPath: "/Users/me/.tako/bin/ht",
+        let ran = await ChannelsMigration.runIfNeeded(defaults: defaults, channelsEnabled: true, isolated: false, htPath: "/Users/me/.tako/bin/ht",
                                                       run: { commands.append($0); return "" })
         XCTAssertTrue(ran)
         XCTAssertEqual(commands.all.count, 1)
@@ -68,7 +68,7 @@ final class MCPRenameTests: XCTestCase {
         XCTAssertNotNil(add, command)
         XCTAssertLessThan(remove!.lowerBound, add!.lowerBound)
 
-        let again = await ChannelsMigration.runIfNeeded(defaults: defaults, channelsEnabled: true, htPath: "/x",
+        let again = await ChannelsMigration.runIfNeeded(defaults: defaults, channelsEnabled: true, isolated: false, htPath: "/x",
                                                         run: { commands.append($0); return "" })
         XCTAssertFalse(again)
         XCTAssertEqual(commands.all.count, 1)
@@ -78,19 +78,33 @@ final class MCPRenameTests: XCTestCase {
     func testChannelsMigrationRetriesAfterAFailureAndSkipsWhenOff() async {
         let defaults = defaults()
         let commands = Commands()
-        let off = await ChannelsMigration.runIfNeeded(defaults: defaults, channelsEnabled: false, htPath: "/x",
+        let off = await ChannelsMigration.runIfNeeded(defaults: defaults, channelsEnabled: false, isolated: false, htPath: "/x",
                                                       run: { commands.append($0); return "" })
         XCTAssertFalse(off)
         XCTAssertTrue(commands.all.isEmpty)
 
-        let failed = await ChannelsMigration.runIfNeeded(defaults: defaults, channelsEnabled: true, htPath: "/x",
+        let failed = await ChannelsMigration.runIfNeeded(defaults: defaults, channelsEnabled: true, isolated: false, htPath: "/x",
                                                          run: { commands.append($0); return nil })
         XCTAssertFalse(failed)
         XCTAssertFalse(defaults.bool(forKey: ChannelsMigration.doneKey))
-        let retried = await ChannelsMigration.runIfNeeded(defaults: defaults, channelsEnabled: true, htPath: "/x",
+        let retried = await ChannelsMigration.runIfNeeded(defaults: defaults, channelsEnabled: true, isolated: false, htPath: "/x",
                                                           run: { commands.append($0); return "" })
         XCTAssertTrue(retried)
         XCTAssertEqual(commands.all.count, 2)
+    }
+
+    /// A copy on its own data must leave Claude's (Mac-wide) config alone, or it points the
+    /// user's `tako` server at its own throwaway ht.
+    @MainActor
+    func testAnIsolatedCopyNeverRewritesClaudesConfig() async {
+        let suite = self.defaults()
+        let commands = Commands()
+        let ran = await ChannelsMigration.runIfNeeded(defaults: suite, channelsEnabled: true, isolated: true,
+                                                      htPath: "/Users/me/.tako-mem/bin/ht",
+                                                      run: { commands.append($0); return "" })
+        XCTAssertFalse(ran)
+        XCTAssertTrue(commands.all.isEmpty)
+        XCTAssertFalse(suite.bool(forKey: ChannelsMigration.doneKey))
     }
 }
 
@@ -100,4 +114,5 @@ private final class Commands: @unchecked Sendable {
     private var commands: [String] = []
     func append(_ command: String) { lock.withLock { commands.append(command) } }
     var all: [String] { lock.withLock { commands } }
+
 }
