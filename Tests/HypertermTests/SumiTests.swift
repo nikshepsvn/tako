@@ -281,7 +281,7 @@ final class SumiTests: XCTestCase {
         var web = LaunchSpec(label: "web", kind: .codex, cwd: "/workspace/shop")
         web.createdAt = now.addingTimeInterval(-60)
 
-        let lines = SessionStore.describeHistory([api, web], now: now).components(separatedBy: "\n")
+        let lines = SessionStore.describeHistory([api, web], now: now, folderExists: { _ in true }).components(separatedBy: "\n")
 
         XCTAssertEqual(lines, [
             "@api [claude] /workspace/atlas (branch kuronami/api) · started 3 hours ago, closed 10 minutes ago · resumes its conversation",

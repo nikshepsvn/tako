@@ -304,7 +304,8 @@ extension SessionStore {
     }
 
     /// session_history's reply: enough about each closed session to tell them apart and pick.
-    static func describeHistory(_ specs: [LaunchSpec], now: Date = Date()) -> String {
+    static func describeHistory(_ specs: [LaunchSpec], now: Date = Date(),
+                                folderExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> String {
         let relative = RelativeDateTimeFormatter()
         relative.locale = Locale(identifier: "en_US_POSIX")
         func ago(_ date: Date) -> String { relative.localizedString(for: date, relativeTo: now) }
@@ -318,7 +319,12 @@ extension SessionStore {
             if let branch = spec.worktreeBranch { head += " (branch \(branch))" }
             head += " · started " + ago(spec.createdAt)
             if let closed = memory?.closedAt { head += ", closed " + ago(closed) }
-            head += spec.agentSessionId == nil ? " · starts fresh" : " · resumes its conversation"
+            if !folderExists(spec.workPath) {
+                // Reopening makes the worktree again from its branch when it can, else opens the repo.
+                head += " · folder missing"
+            } else {
+                head += spec.agentSessionId == nil ? " · starts fresh" : " · resumes its conversation"
+            }
             var lines = [head]
             if let state = memory?.finalState { lines.append("    ended: " + oneLine(state, 160)) }
             if let summary = spec.summary { lines.append("    summary: " + oneLine(summary, 200)) }

@@ -524,13 +524,15 @@ struct ControlHandler {
             var reopened: [TerminalSession] = []
             var lines: [String] = []
             for spec in specs {
-                guard let session = store.reopen(spec) else {
+                let (opened, note) = store.reopenExplained(spec)
+                guard let session = opened else {
                     lines.append(store.lastError ?? "@\(spec.label) couldn't be reopened")
                     continue
                 }
                 reopened.append(session)
                 let renamed = session.label == spec.label ? "" : " (was @\(spec.label))"
-                lines.append("@\(session.label)\(renamed) " + (spec.agentSessionId == nil ? "started fresh" : "resumed its conversation"))
+                lines.append("@\(session.label)\(renamed) " + (session.spec.agentSessionId == nil ? "started fresh" : "resumed its conversation")
+                             + (note.map { ". " + $0 } ?? ""))
             }
             store.showOpenedBySumi(reopened)
             let text = lines.joined(separator: "\n")

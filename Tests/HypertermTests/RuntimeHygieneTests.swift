@@ -170,4 +170,51 @@ final class RuntimeHygieneTests: XCTestCase {
         XCTAssertTrue(fm.fileExists(atPath: profile.appendingPathComponent("Default/Login Data").path))
         XCTAssertTrue(fm.fileExists(atPath: profile.appendingPathComponent("Default/Local Storage").path))
     }
+
+    // MARK: - Closed sessions
+
+    func testClosedEventsDropStartupNoiseAndMarkup() {
+        XCTAssertTrue(SessionStore.isClosedEventNoise("Accepted Claude's development channel warning"))
+        XCTAssertTrue(SessionStore.isClosedEventNoise("Kept bypass permissions (declined Claude's auto mode offer)"))
+        XCTAssertTrue(SessionStore.isClosedEventNoise("› <channel source=\"hyperterm\" source=\"hyperterm\""))
+        XCTAssertTrue(SessionStore.isClosedEventNoise("<task-notification"))
+        XCTAssertFalse(SessionStore.isClosedEventNoise("Tests passed: 211 tests"))
+        XCTAssertFalse(SessionStore.isClosedEventNoise("Bash: cd /repo && make"))
+    }
+
+    func testReopenPlaceForMissingFolders() {
+        let root = "/repo"
+        var claude = LaunchSpec(label: "api", kind: .claude, cwd: root)
+        claude.worktreeName = "api"
+        claude.worktreeBranch = "worktree-api"
+        let present: Set<String> = [root]
+        func place(_ spec: LaunchSpec, branches: Set<String>, exists: Set<String> = present) -> SessionStore.ReopenPlace {
+            SessionStore.reopenPlace(for: spec, exists: { exists.contains($0) }, branchExists: { _, branch in branches.contains(branch) })
+        }
+        XCTAssertEqual(place(claude, branches: [], exists: [root, "/repo/.claude/worktrees/api"]), .asIs)
+        XCTAssertEqual(place(claude, branches: ["worktree-api"]),
+                       .recreate(root: root, path: "/repo/.claude/worktrees/api", branch: "worktree-api"))
+
+        // Started inside a Claude worktree (no name recorded): the branch is guessed from the folder.
+        let inside = LaunchSpec(label: "x", kind: .claude, cwd: "/repo/.claude/worktrees/characters")
+        XCTAssertEqual(place(inside, branches: ["worktree-characters"]),
+                       .recreate(root: root, path: "/repo/.claude/worktrees/characters", branch: "worktree-characters"))
+        guard case .repoRoot(let fallback, let note) = place(inside, branches: []) else { return XCTFail("expected repo root") }
+        XCTAssertEqual(fallback, root)
+        XCTAssertTrue(note.contains("fresh conversation"))
+
+        // Gone repository, or a Tako worktree outside the repo: nothing to fall back to.
+        guard case .unavailable = place(inside, branches: [], exists: []) else { return XCTFail("expected unavailable") }
+        var codex = LaunchSpec(label: "c", kind: .codex, cwd: "/Users/me/.hyperterm/worktrees/repo/c")
+        codex.worktreeBranch = "ht/c"
+        guard case .unavailable(let reason) = place(codex, branches: ["ht/c"]) else { return XCTFail("expected unavailable") }
+        XCTAssertTrue(reason.contains("ht/c"))
+    }
+
+    @MainActor
+    func testHistoryMarksMissingFolders() {
+        let spec = LaunchSpec(label: "gone", kind: .claude, cwd: "/repo/.claude/worktrees/gone")
+        let text = SessionStore.describeHistory([spec], folderExists: { _ in false })
+        XCTAssertTrue(text.contains("folder missing"), text)
+    }
 }
