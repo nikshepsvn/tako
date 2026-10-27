@@ -137,6 +137,7 @@ struct LaunchSpec: Codable, Identifiable, Equatable {
     /// Browser: the page it shows, kept current so it reopens there.
     var url: String?
     /// Browser: the agent it belongs to. Its tools act on this browser by default.
+    /// Server: the agent whose workspace dev server it is; it closes with that agent.
     var owner: UUID?
     /// Parked on the shelf instead of taking a tile in split and grid.
     var minimized: Bool?
