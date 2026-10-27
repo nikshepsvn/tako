@@ -304,7 +304,11 @@ struct ControlHandler {
 
     func notFound(_ target: String?) -> ControlResponse {
         let known = store.sessions.map { "@" + $0.label }.joined(separator: ", ")
-        return .failure("no terminal named \(target ?? "(none)"). Known: \(known.isEmpty ? "none" : known)")
+        let listed = "Known: \(known.isEmpty ? "none" : known)"
+        guard let target, !target.trimmingCharacters(in: .whitespaces).isEmpty else {
+            return .failure("say which terminal: pass terminal, e.g. \"@api\". \(listed)")
+        }
+        return .failure("no terminal named \(target). \(listed)")
     }
 
     // MARK: - Commands
@@ -938,7 +942,9 @@ struct ControlHandler {
     /// Agents rename only themselves, never over a name the user chose, and never onto a label
     /// someone else answers to.
     private func rename(_ request: ControlRequest) -> ControlResponse {
-        guard let label = request.label, !normalizeLabel(label).isEmpty else { return .failure("label is empty") }
+        guard let label = request.label, !normalizeLabel(label).isEmpty else {
+            return .failure("pass label: the new short kebab-case name, e.g. \"auth-refactor\"")
+        }
         if let me = callerAgent {
             if let target = request.target, !target.isEmpty, resolve(target)?.id != me.id {
                 return .failure("agents can only rename their own terminal")

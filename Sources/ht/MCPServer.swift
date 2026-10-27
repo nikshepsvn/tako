@@ -34,7 +34,9 @@ func runMCPServer() -> Never {
         case "ping":
             reply(id: id, result: [:])
         case "tools/list":
-            reply(id: id, result: ["tools": isSumi ? sumiToolDefinitions : toolDefinitions + agentToolDefinitions])
+            let tools = isSumi ? markingAlwaysLoaded(sumiToolDefinitions, alwaysLoadedSumiTools)
+                : markingAlwaysLoaded(toolDefinitions + agentToolDefinitions, alwaysLoadedWorkerTools)
+            reply(id: id, result: ["tools": tools])
         case "tools/call":
             let name = params["name"] as? String ?? ""
             let arguments = params["arguments"] as? [String: Any] ?? [:]
@@ -480,7 +482,8 @@ private func tileSpec(_ value: Any) -> TileSpec? {
     return TileSpec(split: object["split"] as? String, sizes: sizes, children: children.compactMap { $0 })
 }
 
-private func callTool(_ name: String, _ arguments: [String: Any], sessionID: String?) -> (String, Bool) {
+private func callTool(_ name: String, _ given: [String: Any], sessionID: String?) -> (String, Bool) {
+    let arguments = normalizeToolArguments(name, given)
     var req: ControlRequest
     switch name {
     case "list_terminals":
