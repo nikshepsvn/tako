@@ -36,6 +36,8 @@ final class SessionStore: ObservableObject {
     /// Sumi's plan, memory and learned approvals (SumiBrain), on disk beside the sessions.
     lazy var sumiBrain = SumiBrain(directory: persists ? ControlPaths.supportDirectory : nil)
     var sumiDigestRetryScheduled = false
+    /// Tako Link: friends' Takos on this network, whose Sumis talk to this one (SessionStore+Link).
+    lazy var link = TakoLink(directory: persists ? ControlPaths.supportDirectory : nil)
     /// What Sumi opened in the last few seconds (see showOpenedBySumi).
     var sumiOpened: [(id: UUID, at: Date)] = []
     var overlapWatch = OverlapWatch()

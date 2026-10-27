@@ -19,6 +19,8 @@ enum PromptOrigin: Equatable {
         "channel", "task-notification", "cross-session-message", "system-reminder",
         "local-command-caveat", "local-command-stdout", "local-command-stderr", "bash-notification",
         "user-prompt-submit-hook", "agent-message",
+        // Tako Link: a friend's Sumi, relayed by Tako. Never the user, whatever it says.
+        "peer-message",
     ]
 
     init(_ prompt: String) {

@@ -1,4 +1,5 @@
 import AppKit
+import Network
 import SwiftUI
 import XCTest
 @testable import Tako
@@ -75,6 +76,7 @@ final class InterfaceSnapshotTests: XCTestCase {
                     name: "empty-wide", output: output)
         try capture(SumiPlanBoard(plan: store.sumiBrain.plan, select: { _ in }),
                     size: NSSize(width: 380, height: 360), name: "sumi-plan-board", output: output)
+        try captureLink(output)
         try capture(NothingOnCanvasView(), size: NSSize(width: 720, height: 420),
                     name: "nothing-on-canvas", output: output)
         try capture(StandupView(store: store, dismiss: {}), size: NSSize(width: StandupView.width, height: 336),
@@ -438,5 +440,30 @@ final class InterfaceSnapshotTests: XCTestCase {
         let png = try XCTUnwrap(image.representation(using: .png, properties: [:]))
         XCTAssertGreaterThan(png.count, 1_000, "\(name) capture is unexpectedly empty")
         try png.write(to: output.appendingPathComponent(name + ".png"), options: .atomic)
+    }
+
+    /// Tako Link: Settings with a friend paired and one nearby mid-pairing, and the dock's panel
+    /// with an answer waiting for approval and the conversation so far.
+    private func captureLink(_ output: URL) throws {
+        let link = TakoLink(directory: nil)
+        link.setEnabled(true)
+        link.setName("Nikshep")
+        link.addPeer(name: "Alex", key: LinkIdentity.generate().publicKey)
+        let endpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: 9)
+        link.showPreview(nearby: [TakoLink.Nearby(name: "Sam", fingerprint: "5a3e00c1d2e3f405", endpoint: endpoint)],
+                         pairing: TakoLink.Pairing(name: "Sam", fingerprint: "5a3e00c1d2e3f405", code: "482913", phase: .comparing, incoming: true))
+        try capture(LinkSettings(link: link), size: NSSize(width: 560, height: 560), name: "link-settings", output: output)
+
+        let alex = link.peers[0]
+        link.showPreview(nearby: [], pairing: nil)
+        link.inbox = [
+            LinkInboxItem(id: "q-1", peerName: "Alex", kind: .ask, text: "Is the auth refactor on main yet? I want to rebase the billing branch.",
+                          requestID: "r-1", incoming: true),
+        ]
+        link.approvals = [LinkApproval(id: "m-2", peer: alex, message: LinkMessage(kind: .answer, id: "m-2",
+            text: "Not yet: @api is on the last two files of the auth refactor, tests green so far. Expect it on main in about an hour.",
+            requestID: "q-1"))]
+        try capture(LinkPanel(link: link, send: { _, _ in nil }, deny: { _ in }), size: NSSize(width: 380, height: 330),
+                    name: "link-panel", output: output)
     }
 }

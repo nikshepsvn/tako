@@ -41,6 +41,9 @@ enum ControlCommand: String, Codable {
     // Sumi's on-demand cleanup:
     case orphans       // processes Tako started whose terminal is gone: text = list | kill, targets = pids
     case doctor        // Tako's health summary, for the user (`ht doctor`) or Sumi
+    // Tako Link, the user's side (`ht link`): text = status | on | off | name | pair | confirm | cancel
+    // | unpair | approve | deny; label = name, peer or approval id; payload = edited text
+    case link
 }
 
 struct ControlRequest: Codable {

@@ -24,6 +24,8 @@ extension ControlHandler {
             store.doctor { reply(.success(text: $0)) }
         case "recall":
             reply(.success(text: store.recall(project: args["project"] as? String)))
+        case "peer":
+            store.peerCommand(args) { send($0) }
         default:
             reply(.failure("unknown Sumi tool \(request.text ?? "")"))
         }

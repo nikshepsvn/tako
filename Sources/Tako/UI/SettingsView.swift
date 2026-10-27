@@ -49,13 +49,14 @@ extension Notification.Name {
 
 struct SettingsView: View {
     enum Pane: String, CaseIterable, Identifiable {
-        case general = "General", accounts = "Accounts", integrations = "Integrations"
+        case general = "General", accounts = "Accounts", integrations = "Integrations", link = "Link"
         var id: String { rawValue }
         var symbol: String {
             switch self {
             case .general: return "gearshape"
             case .accounts: return "person.crop.circle"
             case .integrations: return "puzzlepiece.extension"
+            case .link: return "antenna.radiowaves.left.and.right"
             }
         }
     }
@@ -73,6 +74,8 @@ struct SettingsView: View {
             case .general: GeneralSettings()
             case .accounts: AccountsView(accounts: AccountStore.shared, signIn: signIn)
             case .integrations: IntegrationSettings()
+            case .link:
+                if let link = TerminalSessionFactory.store?.link { LinkSettings(link: link) }
             }
         }
         .frame(width: 560)

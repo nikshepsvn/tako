@@ -128,6 +128,7 @@ extension SessionStore {
             // notification), isn't the user's turn: no checkpoint, and the card keeps its summary.
             session.turnIsMessage = !(prompt.map(PromptOrigin.init) ?? .user).isUser
             session.turnFromUser = prompt.map(isUsersOwnPrompt) ?? false
+            session.userPrompt = session.turnFromUser ? prompt : nil
             notifier.turnStarted(session)
             session.lastReply = nil
             // A turn already opened before the hooks could report it isn't opened twice.

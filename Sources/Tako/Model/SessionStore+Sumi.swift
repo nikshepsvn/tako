@@ -349,6 +349,7 @@ extension SessionStore {
             // In Phone Mode Sumi is the user's only way in: one that quits comes back, on the phone.
             if case .exited = session.state, isPhoneModeOn { restartSumiForPhone(session) }
             flushSumiDigest()
+            flushPeerMessages()
             return
         }
         // An exited sumi would drop the event; the watch keeps until it can hear.

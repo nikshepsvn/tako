@@ -31,8 +31,14 @@
 	</dict>
 	<key>LSMinimumSystemVersion</key>
 	<string>15.0</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_tako._tcp</string>
+	</array>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Tako Link lets Tako find your friends' Takos on this network, so your Sumis can message each other.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>

@@ -31,6 +31,8 @@ final class RecordingNotificationSink: NotificationSink {
 final class AttentionNotifier: NSObject, UNUserNotificationCenterDelegate {
     var onActivate: ((UUID) -> Void)?
     var onApprovalAction: ((UUID, PromptAnswer) -> Void)?
+    /// A Tako Link banner was clicked: show Sumi, where its messages and approvals are.
+    var onLinkActivate: (() -> Void)?
     /// Whether the user is looking at the session right now (its tile on screen in the key
     /// window): a banner would only repeat what they see.
     var isLooking: ((TerminalSession) -> Bool)?
@@ -117,6 +119,13 @@ final class AttentionNotifier: NSObject, UNUserNotificationCenterDelegate {
         if !NSApp.isActive, sink is SystemNotificationSink { NSApp.requestUserAttention(.criticalRequest) }
     }
 
+    /// Tako Link news, which belongs to no session: a friend's message while Sumi is away, a
+    /// pair request, a message waiting for the user's approval. Always shown; `identifier`
+    /// replaces an earlier banner about the same thing.
+    func postLink(identifier: String, title: String, body: String) {
+        deliver(identifier: "link-" + identifier, sessionID: nil, title: title, body: body, category: nil)
+    }
+
     func clearApproval(session: TerminalSession) {
         sink.removeDelivered([approvalIdentifier(session)])
     }
@@ -128,13 +137,13 @@ final class AttentionNotifier: NSObject, UNUserNotificationCenterDelegate {
 
     private func approvalIdentifier(_ session: TerminalSession) -> String { "approval-\(session.id.uuidString)" }
 
-    private func deliver(identifier: String, sessionID: UUID, title: String, body: String, category: String?) {
+    private func deliver(identifier: String, sessionID: UUID?, title: String, body: String, category: String?) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = .default
-        content.userInfo = ["session": sessionID.uuidString]
-        content.threadIdentifier = sessionID.uuidString
+        content.userInfo = sessionID.map { ["session": $0.uuidString] } ?? ["link": true]
+        content.threadIdentifier = sessionID?.uuidString ?? "tako-link"
         if let category { content.categoryIdentifier = category }
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
         sink.add(request)
@@ -150,9 +159,15 @@ final class AttentionNotifier: NSObject, UNUserNotificationCenterDelegate {
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                             withCompletionHandler completionHandler: @escaping () -> Void) {
         let raw = response.notification.request.content.userInfo["session"] as? String
+        let isLink = response.notification.request.content.userInfo["link"] != nil
         let action = response.actionIdentifier
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
+                if isLink {
+                    NSApp.activate(ignoringOtherApps: true)
+                    self.onLinkActivate?()
+                    return
+                }
                 guard let raw, let id = UUID(uuidString: raw) else { return }
                 switch action {
                 case Self.allowAction: self.onApprovalAction?(id, .approve)

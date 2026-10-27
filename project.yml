@@ -79,6 +79,10 @@ targets:
         # Keep the pre-Liquid Glass window chrome (flush sidebar, plain toolbar items) when
         # built with the macOS 26+ SDK, so every build looks the same.
         UIDesignRequiresCompatibility: true
+        # Tako Link (off by default): Bonjour discovery of friends' Takos on the same network.
+        NSLocalNetworkUsageDescription: "Tako Link lets Tako find your friends' Takos on this network, so your Sumis can message each other."
+        NSBonjourServices:
+          - _tako._tcp
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.hyperterm.app

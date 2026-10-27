@@ -81,6 +81,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         store.loadUsage()
+        store.notifier.onLinkActivate = { [weak store] in store?.onShowSumi?() }
+        // Off by default: nothing listens or browses until the user turns Link on.
+        store.startLink()
         NSApp.activate(ignoringOtherApps: true)
         restoreWhenReady()
     }
