@@ -38,6 +38,8 @@ enum ControlCommand: String, Codable {
     case changes       // target's diff: text = branch | uncommitted, patch, paths
     case board         // the project's team board: text = read | note | claim | release
     case logs          // target's output filtered: pattern (grep), errors in submit, since, lines
+    // Sumi's on-demand cleanup:
+    case orphans       // processes Tako started whose terminal is gone: text = list | kill, targets = pids
 }
 
 struct ControlRequest: Codable {

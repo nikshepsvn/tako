@@ -482,6 +482,19 @@ private let sumiToolDefinitions: [[String: Any]] = toolDefinitions.filter {
             ],
         ],
     ],
+    [
+        "name": "orphans",
+        "description": "Stray processes Tako started whose terminal is gone: dev servers, Chromes and tools agents left behind, with pid, process group, command, age and memory. Use this, not ps, lsof or pkill, when the user asks to clean up stale servers or browsers. list first; kill only ids from that list, and only when the user asked to stop them (user_requested true). kill sends TERM to each process group, then KILL.",
+        "inputSchema": [
+            "type": "object",
+            "properties": [
+                "action": ["type": "string", "enum": ["list", "kill"]],
+                "ids": ["type": "array", "items": ["type": "integer"], "description": "With kill: pids from the last list"],
+                "user_requested": userRequestedSchema,
+            ],
+            "required": ["action"],
+        ],
+    ],
 ] + sumiBoardToolDefinitions
 
 /// Who `user_requested` speaks for, shown on every tool that takes it.
@@ -663,6 +676,11 @@ private func callTool(_ name: String, _ given: [String: Any], sessionID: String?
         req.target = arguments["terminal"] as? String
         req.targets = arguments["terminals"] as? [String]
         req.hard = arguments["hard"] as? Bool
+        req.userRequested = arguments["user_requested"] as? Bool
+    case "orphans":
+        req = ControlRequest(cmd: .orphans)
+        req.text = arguments["action"] as? String ?? "list"
+        req.targets = (arguments["ids"] as? [Any])?.map { "\($0)" }
         req.userRequested = arguments["user_requested"] as? Bool
     case "phone_mode":
         req = ControlRequest(cmd: .phoneMode)

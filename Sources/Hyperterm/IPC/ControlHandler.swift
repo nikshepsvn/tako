@@ -32,7 +32,7 @@ struct ControlHandler {
         return session
     }
 
-    private var callerSumi: TerminalSession? {
+    var callerSumi: TerminalSession? {
         guard let agent = callerAgent, agent.isSumi else { return nil }
         return agent
     }
@@ -184,6 +184,8 @@ struct ControlHandler {
         case .history where request.text == "list" && request.pattern?.isEmpty == false:
             guard callerSumi != nil else { reply(.failure("only Sumi reopens past sessions")); return }
             searchHistory(request, reply: reply)
+        case .orphans:
+            orphans(request, reply: reply)
         case .wait:
             waitFor(request, reply: reply)
         case .changes:
@@ -295,7 +297,7 @@ struct ControlHandler {
             guard let target = callerSession ?? (isUser ? resolve(request.target) : nil) else { return notFound(request.target) }
             store.sessionWantsAttention(target, title: "@\(target.label)", body: sanitizeMessage(request.text ?? ""))
             return .success()
-        case .permission, .subscribe, .browser, .heavy, .act, .sumi, .wait, .changes:
+        case .permission, .subscribe, .browser, .heavy, .act, .sumi, .wait, .changes, .orphans:
             return .success()
         }
     }
