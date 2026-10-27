@@ -96,4 +96,51 @@ final class RuntimeHygieneTests: XCTestCase {
         XCTAssertTrue(StatusLineRunner.reportDue(session: "s", input: statusInput(cost: 1, durationMs: 1, context: 40), directory: dir, now: start.addingTimeInterval(1)))
         XCTAssertTrue(StatusLineRunner.reportDue(session: "other", input: statusInput(cost: 1, durationMs: 1, context: 40), directory: dir, now: start))
     }
+
+    // MARK: - Browser janitor
+
+    private func page(_ id: String, _ url: String) -> BrowserJanitor.Target {
+        BrowserJanitor.Target(id: id, type: "page", url: url, webSocketDebuggerUrl: "ws://127.0.0.1:1/devtools/page/\(id)")
+    }
+
+    @MainActor
+    func testJanitorAsksEachOwnedPageOnce() {
+        var ledger = BrowserJanitor.Ledger()
+        let owned = page("A", "http://localhost:3000/redirected")
+        let labels: Set<String> = ["charlie"]
+        XCTAssertTrue(ledger.needsTag(owned, labels: labels, addresses: []))
+        ledger.record(tag: "charlie", for: "A")
+        for _ in 0..<5 {
+            XCTAssertFalse(ledger.needsTag(owned, labels: labels, addresses: []), "a known owner is not asked again")
+            XCTAssertEqual(ledger.conclude([owned], labels: labels, addresses: []), .init())
+        }
+        // Renamed: the remembered tag is no longer live, so it is asked again rather than closed.
+        XCTAssertTrue(ledger.needsTag(owned, labels: ["delta"], addresses: []))
+    }
+
+    @MainActor
+    func testJanitorMatchesAddressesWithoutTrailingSlash() {
+        let ledger = BrowserJanitor.Ledger()
+        let addresses = Set(["http://localhost:3000"].map { BrowserJanitor.Ledger.normalized($0) })
+        XCTAssertFalse(ledger.needsTag(page("A", "http://localhost:3000/"), labels: [], addresses: addresses))
+        XCTAssertEqual(BrowserJanitor.Ledger.normalized("about:blank"), "about:blank")
+        XCTAssertEqual(BrowserJanitor.Ledger.normalized("file:///"), "file://")
+    }
+
+    @MainActor
+    func testJanitorClosesOrphanThenStopsAHalfClosedOne() {
+        var ledger = BrowserJanitor.Ledger()
+        let orphan = page("B", "about:blank")
+        ledger.record(tag: "alpha", for: "B") // a label no live browser has
+        XCTAssertEqual(ledger.conclude([orphan], labels: ["charlie"], addresses: []).close, [], "first sweep only suspects")
+        XCTAssertEqual(ledger.conclude([orphan], labels: ["charlie"], addresses: []).close, ["B"])
+        // Still listed after the close: its renderer is stopped, then it is left alone for good.
+        XCTAssertTrue(ledger.needsTag(orphan, labels: ["charlie"], addresses: []))
+        XCTAssertEqual(ledger.conclude([orphan], labels: ["charlie"], addresses: []).stopRenderer, ["B"])
+        XCTAssertFalse(ledger.needsTag(orphan, labels: ["charlie"], addresses: []))
+        XCTAssertEqual(ledger.conclude([orphan], labels: ["charlie"], addresses: []), .init())
+        // Gone pages are forgotten.
+        _ = ledger.conclude([], labels: [], addresses: [])
+        XCTAssertTrue(ledger.pages.isEmpty)
+    }
 }
