@@ -207,7 +207,7 @@ extension SessionStore {
         memory.closedAt = Date()
         memory.lastActiveAt = session.stateChangedAt
         memory.finalState = session.state.detail.map { "\(session.state.phrase): \($0)" } ?? session.state.phrase
-        let events = session.timeline.suffix(8).map {
+        let events = session.timeline.filter { !Self.isClosedEventNoise($0.text) }.suffix(8).map {
             $0.text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: " ")
         }
         memory.events = events.isEmpty ? nil : events
@@ -231,20 +231,88 @@ extension SessionStore {
         saveRecentlyClosed()
     }
 
+    /// Timeline lines not worth keeping for a closed session: Tako answering Claude's startup
+    /// screens (in 18 of 50 stored sessions, often all there was) and raw channel or tool markup.
+    nonisolated static func isClosedEventNoise(_ text: String) -> Bool {
+        let line = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let startupNotes = ["Accepted Claude's development channel warning",
+                            "Kept bypass permissions (declined Claude's auto mode offer)",
+                            "Page closed to save memory"]
+        if startupNotes.contains(where: { line.hasPrefix($0) }) { return true }
+        let unmarked = line.hasPrefix("›") ? line.dropFirst().trimmingCharacters(in: .whitespaces) : line
+        return unmarked.hasPrefix("<") || unmarked.isEmpty
+    }
+
+    /// Where a closed session can come back when its folder is gone (an archived or deleted
+    /// worktree; 4 of 50 stored sessions). Worktree GC keeps the branch, so the worktree can be
+    /// made again at the same path, which also keeps the conversation resumable.
+    enum ReopenPlace: Equatable {
+        case asIs
+        /// `git -C root worktree add path branch`.
+        case recreate(root: String, path: String, branch: String)
+        /// Open in the main checkout instead; the conversation can't follow (Claude files it under
+        /// its folder), so it starts fresh.
+        case repoRoot(String, note: String)
+        case unavailable(String)
+    }
+
+    nonisolated static func reopenPlace(for spec: LaunchSpec, exists: (String) -> Bool,
+                                        branchExists: (_ root: String, _ branch: String) -> Bool) -> ReopenPlace {
+        let path = spec.workPath
+        if exists(path) { return .asIs }
+        let marker = "/.claude/worktrees/"
+        // Claude worktrees sit inside the repo; Tako's own (Codex) don't say where theirs is.
+        guard let range = path.range(of: marker) else {
+            let branch = spec.worktreeBranch.map { " Its work is on branch \($0)." } ?? ""
+            return .unavailable("@\(spec.label)'s folder \(abbreviateHome(path)) is gone, so it can't be reopened.\(branch)")
+        }
+        let root = String(path[..<range.lowerBound])
+        guard exists(root) else {
+            return .unavailable("@\(spec.label)'s repository \(abbreviateHome(root)) is gone, so it can't be reopened.")
+        }
+        let name = String(path[range.upperBound...]).split(separator: "/").first.map(String.init) ?? ""
+        let candidates = [spec.worktreeBranch, name.isEmpty ? nil : "worktree-\(name)"].compactMap { $0 }
+        if let branch = candidates.first(where: { branchExists(root, $0) }) {
+            return .recreate(root: root, path: (root as NSString).appendingPathComponent(".claude/worktrees/\(name)"), branch: branch)
+        }
+        return .repoRoot(root, note: "Its worktree \(abbreviateHome(path)) was deleted and no branch was left, so it reopened in \(abbreviateHome(root)) with a fresh conversation")
+    }
+
     /// Resumes the conversation when there is one; otherwise starts a fresh agent in its folder.
     @discardableResult
-    func reopen(_ spec: LaunchSpec) -> TerminalSession? {
+    func reopen(_ spec: LaunchSpec) -> TerminalSession? { reopenExplained(spec).session }
+
+    /// `reopen`, and what happened to a missing folder: it is made again from its branch, or the
+    /// session opens in its repository. A session that can't come back stays in the list.
+    func reopenExplained(_ spec: LaunchSpec) -> (session: TerminalSession?, note: String?) {
+        var spec = spec
+        var note: String?
+        switch Self.reopenPlace(for: spec, exists: { FileManager.default.fileExists(atPath: $0) },
+                                branchExists: { runGit(["-C", $0, "rev-parse", "--verify", "--quiet", "refs/heads/\($1)"]) != nil }) {
+        case .asIs:
+            break
+        case .recreate(let root, let path, let branch):
+            guard runGit(["-C", root, "worktree", "add", path, branch]) != nil else {
+                lastError = "@\(spec.label)'s worktree is gone and couldn't be made again from branch \(branch)."
+                return (nil, nil)
+            }
+            note = "Its worktree was deleted; made it again from branch \(branch)"
+        case .repoRoot(let root, let text):
+            spec.cwd = root
+            spec.worktreeName = nil
+            spec.worktreeBranch = nil
+            spec.agentSessionId = nil
+            note = text
+        case .unavailable(let reason):
+            lastError = reason
+            return (nil, nil)
+        }
         recentlyClosed.removeAll { $0.id == spec.id }
         saveRecentlyClosed()
-        // A conversation lives with its folder; once the worktree is archived it can't resume.
-        guard FileManager.default.fileExists(atPath: spec.workPath) else {
-            let branch = spec.worktreeBranch.map { " Its work is on branch \($0)." } ?? ""
-            lastError = "@\(spec.label)'s worktree was archived, so it can't be reopened.\(branch)"
-            return nil
-        }
-        var spec = spec
         spec.label = sessions.contains { $0.label == spec.label } ? "" : spec.label
-        return create(spec, resume: spec.canResume)
+        let session = create(spec, resume: spec.canResume)
+        if let note { session.record(.note, note) }
+        return (session, note)
     }
 
     func forgetClosed() {

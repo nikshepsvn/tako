@@ -198,14 +198,15 @@ case "permission":
     exit(0)
 
 case "statusline":
-    // Claude statusLine: report telemetry to Tako, then print the user's own statusline.
+    // Claude statusLine: report telemetry to Tako when it changed, then print the user's own
+    // statusline (cached briefly; see StatusLineRunner for why every step is trimmed).
     let input = FileHandle.standardInput.readDataToEndOfFile()
-    if let callerSession, statusLineDue(session: callerSession) {
+    if let callerSession, StatusLineRunner.reportDue(session: callerSession, input: input) {
         var req = ControlRequest(cmd: .statusline)
         req.payload = String(decoding: input, as: UTF8.self)
         _ = try? sendControlRequest(req, timeout: 1)
     }
-    print(userStatusLine(input: input), terminator: "")
+    FileHandle.standardOutput.write(StatusLineRunner.render(input: input, environment: env))
     exit(0)
 
 case "mcp":
@@ -233,38 +234,4 @@ case "-h", "--help", "help":
 
 default:
     fail("ht: unknown command '\(command)'\n\n\(usage)")
-}
-
-/// Claude reruns the statusline up to a few times a second; Tako needs one report every 2 s.
-/// The last report's time is a file's mtime in a per-user temp dir.
-func statusLineDue(session: String) -> Bool {
-    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ht-statusline")
-    let stamp = dir.appendingPathComponent(session.filter { $0.isHexDigit || $0 == "-" })
-    if let last = (try? FileManager.default.attributesOfItem(atPath: stamp.path))?[.modificationDate] as? Date,
-       Date().timeIntervalSince(last) < 2 { return false }
-    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    _ = FileManager.default.createFile(atPath: stamp.path, contents: nil)
-    return true
-}
-
-/// Runs the statusLine command from the user's own ~/.claude/settings.json with the same input.
-func userStatusLine(input: Data) -> String {
-    let settings = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/settings.json")
-    guard let data = try? Data(contentsOf: settings),
-          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let statusLine = json["statusLine"] as? [String: Any],
-          let command = statusLine["command"] as? String, !command.contains("ht statusline") else { return "" }
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/bin/sh")
-    process.arguments = ["-c", command]
-    let stdin = Pipe(), stdout = Pipe()
-    process.standardInput = stdin
-    process.standardOutput = stdout
-    process.standardError = FileHandle.nullDevice
-    do { try process.run() } catch { return "" }
-    stdin.fileHandleForWriting.write(input)
-    try? stdin.fileHandleForWriting.close()
-    let output = stdout.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    return String(decoding: output, as: UTF8.self)
 }

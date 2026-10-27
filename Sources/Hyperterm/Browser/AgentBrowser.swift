@@ -58,10 +58,8 @@ final class AgentBrowser {
         configuration.rootCachePath = Self.profileDirectory
         configuration.remoteDebuggingPort = Self.port
         configuration.persistSessionCookies = true
-        // Past a handful of renderers, pages share processes instead of each starting one (every
-        // agent can have tabs open), and no idle spare renderer is kept warm.
-        configuration.extraCommandLineSwitches["renderer-process-limit"] = "6"
-        configuration.extraCommandLineSwitches["disable-features"] = "SpareRendererForSitePerProcess"
+        configuration.extraCommandLineSwitches = Self.chromiumSwitches
+        Self.pruneComponentDownloads(in: Self.profileDirectory)
         do {
             try CefRuntime.shared.initialize(configuration: configuration)
             CEFApplication.setTerminateHandler {
@@ -72,6 +70,29 @@ final class AgentBrowser {
             startError = String(describing: error)
             return false
         }
+    }
+
+    /// HTTP cache cap. Unbounded, the profile grew to ~400 MB (142 MB of it HTTP cache); pages
+    /// agents load are mostly local dev servers that gain little from a big cache.
+    static let diskCacheBytes = 96 * 1024 * 1024
+
+    static var chromiumSwitches: [String: String?] {
+        [
+            // Past a handful of renderers, pages share processes instead of each starting one
+            // (every agent can have tabs open), and no idle spare renderer is kept warm.
+            "renderer-process-limit": "6",
+            "disable-features": "SpareRendererForSitePerProcess",
+            "disk-cache-size": String(diskCacheBytes),
+            // Chrome's component updater downloads DRM, on-device models, TTS and safety lists
+            // (~120 MB) that a browser for local dev and agents doesn't use.
+            "disable-component-update": String?.none,
+        ]
+    }
+
+    /// The component updater's download cache, left from before updates were turned off.
+    /// Only that cache: cookies, logins and site storage live elsewhere in the profile.
+    static func pruneComponentDownloads(in profile: URL) {
+        try? FileManager.default.removeItem(at: profile.appendingPathComponent("component_crx_cache"))
     }
 
     /// Called for each browser tool an agent runs; clears itself a few seconds after the last one.

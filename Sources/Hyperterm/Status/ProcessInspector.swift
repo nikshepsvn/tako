@@ -295,8 +295,17 @@ final class ProcessInspector: @unchecked Sendable {
         let candidates = tree.lazy.filter { !self.shells.contains($0.name) }
         guard let newest = candidates.max(by: { ($0.startSeconds, $0.pid) < ($1.startSeconds, $1.pid) }) else { return nil }
         guard let argv = arguments(of: newest), !argv.isEmpty else { return newest.name }
-        let program = URL(fileURLWithPath: argv[0]).lastPathComponent
-        let rest = argv.dropFirst().prefix(3).map { URL(fileURLWithPath: $0).lastPathComponent }
+        return Self.commandLabel(argv: argv)
+    }
+
+    /// The program and its first few arguments, each shortened to its last path component.
+    /// String path math, not `URL(fileURLWithPath:)`: an argument like `https://host/sse` (from
+    /// `mcp-remote`) made Foundation log an API-misuse fault on every poll and shortened the URL
+    /// to "sse". URLs say nothing about what's running, so they are left out.
+    static func commandLabel(argv: [String]) -> String {
+        guard let first = argv.first else { return "" }
+        let program = (first as NSString).lastPathComponent
+        let rest = argv.dropFirst().lazy.filter { !$0.contains("://") }.prefix(3).map { ($0 as NSString).lastPathComponent }
         return ([program] + rest).joined(separator: " ")
     }
 
