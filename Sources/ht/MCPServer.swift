@@ -7,6 +7,8 @@ func runMCPServer() -> Never {
     let selfLabel = ProcessInfo.processInfo.environment["HT_LABEL"]
     let sessionID = ProcessInfo.processInfo.environment["HT_SESSION_ID"]
     var isSumi = false
+    // Stdin's EOF normally ends this; an agent killed outright may never send it.
+    let parentWatch = ParentWatch.start { exit(0) }
 
     while let line = readLine(strippingNewline: true) {
         guard !line.isEmpty,
@@ -42,6 +44,7 @@ func runMCPServer() -> Never {
             reply(id: id, error: ["code": -32601, "message": "method not found: \(method)"])
         }
     }
+    parentWatch.cancel()
     exit(0)
 }
 

@@ -37,7 +37,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         Theme.load(from: GhosttyRuntime.shared.config)
         AppSettings.settleAutoSleepDefault(existingInstall: SessionStore.hasSavedState)
-        SessionReaper.sweepLeftovers()
+        // Sessions restore once both the sweep and the rest of launch are done.
+        SessionReaper.sweepLeftovers { [weak self] in self?.restoreWhenReady() }
         TerminalSessionFactory.store = store
         startHookServer()
         AgentIntegration.install()
@@ -72,9 +73,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             MainActor.assumeIsolated { self?.updateQuickAskHotKey() }
         }
 
-        _ = store.restore()
         store.loadUsage()
         NSApp.activate(ignoringOtherApps: true)
+        restoreWhenReady()
+    }
+
+    /// The launch sweep and the rest of launch, each of which calls `restoreWhenReady`.
+    private var stepsBeforeRestore = 2
+
+    /// Restores after the sweep has stopped what the last run left, so a resumed agent or server
+    /// never overlaps its old copy (same conversation, same worktree lock, same port). Then
+    /// collects what closed sessions left behind.
+    private func restoreWhenReady() {
+        stepsBeforeRestore -= 1
+        guard stepsBeforeRestore == 0 else { return }
+        _ = store.restore()
+        store.collectLeftoverWork()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -118,6 +132,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.flushPersist()
         controlServer?.stop()
         hookServer?.stop()
+        // Agents, shells and servers stop with Tako; agents resume at the next launch. A
+        // detached terminal is only a window of its own, so it stops too.
+        let sessions = store.sessions.filter { $0.kind != .browser }.map(\.id.uuidString)
+        let inspector = self.inspector
+        SessionReaper.stopAllForQuit(sessions: sessions) { inspector.takeProcesses(ofSession: $0, completion: $1) }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

@@ -248,7 +248,8 @@ enum Review {
 
     private static func lockReason(path: String, mainRoot: String) -> String? {
         let listing = runGit(["-C", mainRoot, "worktree", "list", "--porcelain"]) ?? ""
-        for block in listing.components(separatedBy: "\n\n") where block.contains("worktree \(path)") {
+        // The whole line: "…/worktrees/api" is also a prefix of "…/worktrees/api-2".
+        for block in listing.components(separatedBy: "\n\n") where block.split(separator: "\n").contains(Substring("worktree \(path)")) {
             if let line = block.split(separator: "\n").first(where: { $0.hasPrefix("locked") }) {
                 return String(line.dropFirst("locked".count)).trimmingCharacters(in: .whitespaces)
             }

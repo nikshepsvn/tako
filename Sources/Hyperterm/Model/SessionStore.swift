@@ -326,6 +326,12 @@ final class SessionStore: ObservableObject {
         sessions.filter { $0.kind == .browser && $0.spec.owner == agent.id }
     }
 
+    /// Dev servers Tako started for an agent's workspace (`.hyperterm.json` "dev"). They serve
+    /// that worktree only, so they close with the agent.
+    func servers(ownedBy agent: TerminalSession) -> [TerminalSession] {
+        sessions.filter { $0.kind == .server && $0.spec.owner == agent.id }
+    }
+
     /// Sumi has no sidebar row, so its browsers are loose too.
     var looseBrowsers: [TerminalSession] {
         let agents = Set(sessions.filter { $0.kind.isAgent && !$0.isSumi }.map(\.id))
@@ -415,6 +421,7 @@ final class SessionStore: ObservableObject {
             spec.memory = spec.memory ?? SessionMemory()
             spec.memory?.task = sanitizeMessage(task)
         }
+        recordWorktree(spec)
         let session = TerminalSession(spec: spec, resume: resume, task: task.map(sanitizeMessage))
         if let task, !task.isEmpty { session.record(.prompt, task) }
         session.store = self
@@ -454,6 +461,7 @@ final class SessionStore: ObservableObject {
                 var server = LaunchSpec(label: "\(agent.label)-dev", kind: .server, cwd: path, command: command)
                 server.labelSource = .auto
                 server.port = port
+                server.owner = agent.id
                 self.create(server, select: false)
             }
         }
@@ -462,7 +470,8 @@ final class SessionStore: ObservableObject {
     func close(_ session: TerminalSession) {
         // An agent's browsers are its tools: left behind they'd become loose tiles, each holding
         // a Chromium renderer.
-        if session.kind.isAgent { browsers(ownedBy: session).forEach(close) }
+        // Its workspace's dev server goes too: restored without it, it would hold the port forever.
+        if session.kind.isAgent { (browsers(ownedBy: session) + servers(ownedBy: session)).forEach(close) }
         dropAllApprovals(for: session)
         rememberClosed(session)
         if session.spec.labelSource == .user || session.spec.labelSource == nil {
@@ -478,6 +487,7 @@ final class SessionStore: ObservableObject {
             if sumiHears { addToSumiDigest(SumiEvent(label: session.label, kind: .stoppedHandling("it was closed"))) }
         }
         session.terminate()
+        collectWorktree(afterClosing: session.spec)
         codexServers.removeValue(forKey: session.id)?.close()
         codexHeldRequests[session.id] = nil
         dropChannel(for: session)
@@ -741,7 +751,7 @@ final class SessionStore: ObservableObject {
         guard let data = try? Data(contentsOf: stateFile),
               let specs = try? decoder.decode([LaunchSpec].self, from: data), !specs.isEmpty else { return false }
         // Drop summaries derived from the old title-only heuristic.
-        specs.map { spec -> LaunchSpec in
+        Self.ownedDevServers(specs).map { spec -> LaunchSpec in
             var spec = spec
             if spec.summary == spec.label { spec.summary = nil }
             // Sumi from before it had its own folder starts fresh there; its notes file
@@ -757,6 +767,23 @@ final class SessionStore: ObservableObject {
         // Never Sumi: selecting it opens its panel instead.
         select(sessions.first { !$0.isSumi })
         return true
+    }
+
+    /// Dev servers saved before they had an owner are given back to the agent whose workspace
+    /// they serve; one whose agent is gone isn't restored, so its port is free again.
+    static func ownedDevServers(_ specs: [LaunchSpec]) -> [LaunchSpec] {
+        let agents = specs.filter(\.kind.isAgent)
+        let ids = Set(agents.map(\.id))
+        return specs.compactMap { spec in
+            guard spec.kind == .server else { return spec }
+            if let owner = spec.owner { return ids.contains(owner) ? spec : nil }
+            guard spec.labelSource == .auto, spec.label.hasSuffix("-dev"),
+                  let agent = agents.first(where: { $0.isWorktree && $0.workPath == expandTilde(spec.cwd) && $0.port == spec.port })
+            else { return spec }
+            var adopted = spec
+            adopted.owner = agent.id
+            return adopted
+        }
     }
 
     // MARK: - Labels

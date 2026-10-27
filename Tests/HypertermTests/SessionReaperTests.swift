@@ -66,7 +66,8 @@ final class SessionReaperTests: XCTestCase {
 
     /// `sh -c 'sleep & sleep &'` in its own session: the shell exits and both sleeps are left
     /// to launchd, like a nohup'd job after its terminal closed. One also ignores SIGTERM.
-    private func spawnOrphans() throws -> [pid_t] {
+    private func spawnOrphans(script: String = "sleep 300 & a=$!; trap '' TERM; sleep 301 & echo $a $! > \"$0\"",
+                              count: Int = 2) throws -> [pid_t] {
         var actions: posix_spawn_file_actions_t?
         posix_spawn_file_actions_init(&actions)
         defer { posix_spawn_file_actions_destroy(&actions) }
@@ -77,7 +78,6 @@ final class SessionReaperTests: XCTestCase {
         posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETSID))
         let out = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
         defer { try? FileManager.default.removeItem(atPath: out) }
-        let script = "sleep 300 & a=$!; trap '' TERM; sleep 301 & echo $a $! > \"$0\""
         let argv: [UnsafeMutablePointer<CChar>?] = (["/bin/sh", "-c", script, out] as [String]).map { strdup($0) } + [nil]
         defer { argv.forEach { free($0) } }
         var shell: pid_t = 0
@@ -86,7 +86,7 @@ final class SessionReaperTests: XCTestCase {
         waitpid(shell, &status, 0)
         let output = (try? String(contentsOfFile: out, encoding: .utf8)) ?? ""
         let pids = output.split(separator: " ").compactMap { pid_t($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
-        XCTAssertEqual(pids.count, 2)
+        XCTAssertEqual(pids.count, count)
         let deadline = Date().addingTimeInterval(2)
         while Date() < deadline, !pids.allSatisfy({ SessionReaper.facts($0)?.ppid == 1 }) { usleep(20_000) }
         return pids
@@ -173,5 +173,69 @@ final class SessionReaperTests: XCTestCase {
         SessionReaper.stop(stale, grace: 0.2) { done.fulfill() }
         wait(for: [done], timeout: 5)
         XCTAssertTrue(pids.allSatisfy { SessionReaper.facts($0) != nil })
+    }
+
+    // MARK: - Waiting for the stop
+
+    private func tracked(_ pids: [pid_t]) -> [TrackedProcess] {
+        pids.compactMap { pid in SessionReaper.facts(pid).map { TrackedProcess(pid: pid, start: $0.start, session: "s") } }
+    }
+
+    /// One ignores SIGTERM, as an interactive shell does, but not the hangup.
+    func testStopAndWaitReturnsAsSoonAsEverythingIsGone() throws {
+        let pids = try spawnOrphans(script: "sleep 300 & a=$!; (trap '' TERM; exec sleep 301) & echo $a $! > \"$0\"")
+        defer { pids.forEach { kill($0, SIGKILL) } }
+        let started = Date()
+        SessionReaper.stopAndWait(tracked(pids), grace: 5)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2, "returns once they're gone, not after the grace")
+        XCTAssertTrue(pids.allSatisfy { SessionReaper.facts($0) == nil })
+    }
+
+    func testStopAndWaitKillsWhatIgnoresTermAfterTheGrace() throws {
+        let pids = try spawnOrphans()
+        defer { pids.forEach { kill($0, SIGKILL) } }
+        SessionReaper.stopAndWait(tracked(pids), grace: 0.3)
+        XCTAssertTrue(pids.allSatisfy { SessionReaper.facts($0) == nil })
+    }
+
+    /// Quitting stops every session's processes before Tako exits.
+    func testQuitStopsEverySessionsProcesses() throws {
+        let first = try spawnOrphans(), second = try spawnOrphans(script: "sleep 302 & echo $! > \"$0\"", count: 1)
+        defer { (first + second).forEach { kill($0, SIGKILL) } }
+        let bySession = ["a": tracked(first), "b": tracked(second)]
+        SessionReaper.stopAllForQuit(sessions: ["a", "b", "c"], grace: 0.3) { session, completion in
+            DispatchQueue.global().async { completion(bySession[session] ?? []) }
+        }
+        XCTAssertTrue((first + second).allSatisfy { SessionReaper.facts($0) == nil })
+    }
+
+    /// Sessions restore only once what the last run left has gone.
+    func testSweepCompletesAfterLeftoversAreGone() throws {
+        let pids = try spawnOrphans()
+        defer { pids.forEach { kill($0, SIGKILL) } }
+        let gone = Process()
+        gone.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+        try gone.run()
+        gone.waitUntilExit()
+        let ledger = ProcessLedger(ownerPID: gone.processIdentifier, ownerStart: 1, processes: tracked(pids))
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("ledger-\(UUID().uuidString).json")
+        try JSONEncoder().encode(ledger).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        var logged: [String] = []
+        let done = expectation(description: "restored")
+        SessionReaper.sweepLeftovers(ledger: url, grace: 0.3, log: { line, _ in logged.append(line) }) {
+            XCTAssertTrue(pids.allSatisfy { SessionReaper.facts($0) == nil }, "a leftover still runs as sessions restore")
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 5)
+        XCTAssertEqual(logged.count, 2)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    func testSweepWithNothingLeftCompletesAtOnce() {
+        var completed = false
+        SessionReaper.sweepLeftovers(ledger: URL(fileURLWithPath: "/nonexistent/ledger.json"), log: { _, _ in }) { completed = true }
+        XCTAssertTrue(completed)
     }
 }
