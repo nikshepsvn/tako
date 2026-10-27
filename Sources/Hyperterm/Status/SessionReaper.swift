@@ -112,18 +112,59 @@ enum SessionReaper {
         }
     }
 
-    /// At launch, before sessions restore: stops what an earlier run that quit or crashed left
-    /// running, and notes each in hooks.log.
-    static func sweepLeftovers(ledger url: URL = ProcessLedger.url) {
-        guard let data = try? Data(contentsOf: url),
-              let ledger = try? JSONDecoder().decode(ProcessLedger.self, from: data) else { return }
-        if let owner = facts(ledger.ownerPID), owner.start == ledger.ownerStart { return }
-        try? FileManager.default.removeItem(at: url)
-        let found = leftovers(ledger.processes, facts: facts)
-        for process in found {
-            let name = facts(process.pid)?.name ?? "?"
-            HookLog.append(source: "sweep", sessionID: process.session, payload: "stopped leftover \(name) pid \(process.pid)")
+    /// SIGHUP and SIGTERM now, then SIGKILL whatever is still running once `grace` runs out,
+    /// returning as soon as everything has gone. Blocks the caller for at most `grace` plus a
+    /// moment for the kills to land, so quitting and launching wait only as long as the slowest
+    /// process needs. The hangup is what a closed terminal sends: interactive shells ignore
+    /// SIGTERM, and would otherwise hold every quit for the whole grace period.
+    static func stopAndWait(_ processes: [TrackedProcess], grace: TimeInterval) {
+        guard !processes.isEmpty else { return }
+        signal(processes, SIGHUP)
+        signal(processes, SIGTERM)
+        guard !waitUntilGone(processes, timeout: grace) else { return }
+        signal(processes, SIGKILL)
+        _ = waitUntilGone(processes, timeout: 0.2)
+    }
+
+    /// The same process (pid and start time) is still running.
+    static func isRunning(_ process: TrackedProcess) -> Bool {
+        facts(process.pid)?.start == process.start
+    }
+
+    private static func waitUntilGone(_ processes: [TrackedProcess], timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while processes.contains(where: isRunning) {
+            guard Date() < deadline else { return false }
+            usleep(20_000)
         }
-        stop(found)
+        return true
+    }
+
+    /// At launch, before sessions restore: stops what an earlier run that quit or crashed left
+    /// running, notes each in hooks.log, and calls `completion` on the main queue once they are
+    /// gone. Restoring only then means a resumed agent never shares its conversation, worktree
+    /// lock or dev-server port with the copy it replaces. With nothing to stop, `completion`
+    /// runs at once.
+    static func sweepLeftovers(ledger url: URL = ProcessLedger.url, grace: TimeInterval = 2,
+                               log: (String, String) -> Void = { HookLog.append(source: "sweep", sessionID: $1, payload: $0) },
+                               completion: @escaping @MainActor () -> Void = {}) {
+        let found = leftovers(inLedger: url)
+        guard !found.isEmpty else { MainActor.assumeIsolated { completion() }; return }
+        for process in found {
+            log("stopped leftover \(facts(process.pid)?.name ?? "?") pid \(process.pid)", process.session)
+        }
+        queue.async {
+            stopAndWait(found, grace: grace)
+            DispatchQueue.main.async { MainActor.assumeIsolated { completion() } }
+        }
+    }
+
+    /// What the ledger's run left behind, once that run is over (removing the ledger).
+    static func leftovers(inLedger url: URL) -> [TrackedProcess] {
+        guard let data = try? Data(contentsOf: url),
+              let ledger = try? JSONDecoder().decode(ProcessLedger.self, from: data) else { return [] }
+        if let owner = facts(ledger.ownerPID), owner.start == ledger.ownerStart { return [] }
+        try? FileManager.default.removeItem(at: url)
+        return leftovers(ledger.processes, facts: facts)
     }
 }
