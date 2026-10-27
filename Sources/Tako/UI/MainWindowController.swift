@@ -384,7 +384,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let inUse = Set(store.sessions.map(\.spec.workPath))
         // Closed agents' checkpoints live in the shared repo; archiving their worktree prunes them.
         let closedIDs = Dictionary(grouping: store.recentlyClosed, by: \.workPath).mapValues { $0.map(\.id.uuidString) }
-        let view = WorktreeCleanupView(repoRoots: roots, inUse: inUse, sessionIDs: closedIDs) { [weak self] in self?.dismissSheet() }
+        let knowledge = store.leftoverKnowledge()
+        let context = WorktreeContext(closed: knowledge.closed,
+                                      users: Dictionary(store.sessions.map { ($0.spec.workPath, $0.label) }, uniquingKeysWith: { first, _ in first }),
+                                      bases: knowledge.bases)
+        let view = WorktreeCleanupView(repoRoots: roots, inUse: inUse, sessionIDs: closedIDs, context: context) { [weak self] in self?.dismissSheet() }
         let sheet = NSWindow(contentViewController: NSHostingController(rootView: view))
         sheetWindow = sheet
         window.beginSheet(sheet)
