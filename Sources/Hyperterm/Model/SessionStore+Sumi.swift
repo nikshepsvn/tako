@@ -336,6 +336,8 @@ extension SessionStore {
     /// Gathers what Sumi should hear about this change, so one agent's finished work can
     /// start the next. It wakes once for the digest, not once per event.
     func reportToSumi(_ session: TerminalSession, from previous: AgentState) {
+        // The plan moves with its owners even while Sumi is away; Sumi hears when it's back.
+        planSawStateChange(session, from: previous)
         guard let sumi else { return }
         if sumi.id == session.id {
             // In Phone Mode Sumi is the user's only way in: one that quits comes back, on the phone.
@@ -351,13 +353,14 @@ extension SessionStore {
             addToSumiDigest(SumiEvent(label: session.label, kind: .needsYou(
                 "it's asking whether to trust this folder. Only the user can answer: they've been notified and can press Trust Folder on its card. Don't send it input", note: nil)))
         }
+        extraSumiEvents(session, from: previous).forEach { addToSumiDigest($0) }
         guard let event = sumiEvent(session, from: previous) else { return }
         addToSumiDigest(event)
     }
 
     /// The steward saw something it won't act on alone; Sumi checks and tells the user.
     func reportToSumi(_ escalation: Escalation) {
-        guard sumi != nil else { return }
+        guard sumi != nil, stewardWarningIsNews(escalation) else { return }
         addToSumiDigest(SumiEvent(label: escalation.label, kind: .steward(escalation.message)))
     }
 
@@ -403,12 +406,15 @@ extension SessionStore {
         switch session.state {
         // Background subagents outlive the turn; their last SubagentStop reports it instead.
         case .idle where previous == .working && session.runningSubagents.isEmpty:
-            kind = .finished(session.summary ?? "turn complete")
+            let summary = Self.turnSummary(session) ?? "turn complete (read_terminal for its reply)"
+            kind = .finished(summary + (finishFacts(session).map { " [\($0)]" } ?? ""))
         case .failed(let reason): kind = .failed(reason)
         case .exited: kind = .exited
         default: return nil
         }
-        sumiWatches[session.id] = nil
+        // A repeating watch re-arms until the terminal closes or exits.
+        if case .exited = kind { sumiBrain.repeatWatches[session.id] = nil }
+        sumiWatches[session.id] = sumiBrain.repeatWatches[session.id]
         return SumiEvent(label: session.label, kind: kind, note: note.isEmpty ? nil : note)
     }
 
@@ -473,6 +479,14 @@ struct SumiEvent: Equatable {
         case stoppedHandling(String)
         /// The user turned Phone Mode on or off; not about one terminal.
         case phoneMode(Bool)
+        /// The plan moved: tasks done, failed, started.
+        case plan(String)
+        /// A server exited with an error, with its last output.
+        case serverCrashed(code: Int, tail: String)
+        /// An agent Sumi follows has waited on the user for minutes.
+        case waitingLong(String, minutes: Int)
+        /// Tako approved a handled session's request as the user always does in that project.
+        case autoApproved(String)
     }
 
     var label: String
@@ -499,6 +513,16 @@ struct SumiEvent: Equatable {
                 + "interrupt_agent, send_message). Approve a risky request only after they say yes to it."
         case .phoneMode(false):
             return "Phone Mode is off: the user is back at the Mac, and agents' waits go to them again."
+        case .plan(let news):
+            return "plan: " + news
+        case .serverCrashed(let code, let tail):
+            line += "(server) crashed with exit \(code)" + (tail.isEmpty ? "" : ": " + tail)
+                + ". Tell its agent or restart_server it if the cause is clear"
+        case .waitingLong(let reason, let minutes):
+            line += "has waited \(minutes) min on the user: " + reason
+                + ". They were notified; remind them, or unblock what depends on it"
+        case .autoApproved(let key):
+            line += "asked for \(key): approved, as the user always does in this project"
         case .finished(let summary): line += "finished: " + summary
         case .failed(let reason): line += "failed: " + reason
         case .exited: line += "exited"
@@ -557,7 +581,7 @@ struct SumiDigest {
 
     static func message(_ events: [SumiEvent], cleared: Bool = false) -> String {
         var text = "Tako: "
-        if cleared { text += "Context was cleared. Read \(ControlPaths.sumiNotes) if you need earlier context. " }
+        if cleared { text += "Context was cleared: call standup, plan and recall to pick up; open threads are in \(ControlPaths.sumiNotes). " }
         if events.count == 1 {
             text += events[0].line
         } else {

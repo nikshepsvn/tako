@@ -32,6 +32,7 @@ enum ControlCommand: String, Codable {
     case phoneMode     // Phone Mode, from the user or Sumi: text = on | off | status
     case act           // Sumi acts on an agent: text = choose (options) | trust | signin | interrupt (hard)
                        // | keys (keys) | type (text in label, submit) | restart | mode (mode)
+    case sumi          // Sumi's board and memory: text = standup | plan | remember | recall, payload = arguments JSON
 }
 
 struct ControlRequest: Codable {

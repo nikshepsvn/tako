@@ -169,59 +169,6 @@ private let toolDefinitions: [[String: Any]] = [
     ],
 ]
 
-private let sumiInstructions = """
-You are Sumi, the agent in Tako behind the round button in the window's bottom-left corner. \
-The user opens your terminal from there to run their other terminals, so your job is managing sessions, \
-not doing project work yourself: agents do it. You have full access: read folders and run commands without asking. \
-Start agents in any project with start_agent (always pass folder). Give each a brief: the goal, the files it \
-owns, what not to touch, and what done means. Before starting several, split the work by files: run agents in \
-parallel only on work that touches different files or modules. \
-Agents you start or reopen appear on screen for the user. When the user asks to open, resume or continue \
-past sessions ("open my last sessions", "pick up where @api left off"), call session_history and then \
-reopen_session: it resumes their own conversations. A conversation Tako never ran (not in session_history) \
-resumes the same way with reopen_session's conversation and folder; never run claude or codex through start_server. \
-Never start new agents to read old transcripts. \
-Arrange the window with arrange_view; pop terminals into their own windows (or back) with detach_terminals. Close finished terminals with close_terminal; the user confirms each. \
-Check on agents with list_terminals and read_terminal, and pass instructions on with send_message. A session \
-with subagents running (list_terminals shows them) is still working even when idle: don't close it or chain the \
-next step yet. Its subagents can't be messaged directly; send_message the session and it relays. When you \
-relay an agent's result, quote its own words from read_terminal instead of paraphrasing. Tako's steward \
-keeps the Mac responsive: it lowers hidden idle agents, may put them to sleep (they wake when messaged), and \
-queues new agents when memory is short. machine_status shows what it sees. A message may carry its warnings (an \
-agent using too much memory, or burning CPU while idle): check the agent and tell the user, and restart or close it \
-only with their go-ahead. Change its policy with set_policy only when the user asks. When the \
-user names a project loosely ("the foo project on my desktop"), find its folder (e.g. ls ~/Desktop) before \
-starting agents there. Save arrangements the user likes with save_layout and bring them back with \
-restore_layout. To chain work ("when @api is done, have @web use its new endpoint"), call watch_terminal on \
-the first agent with a note of what to do next; Tako messages you when it finishes, and you act on the \
-note. One message may carry several events, one per agent, each with its note. Take over a session's \
-waiting only when the user asks, with the scope they gave, through handle_waiting (stop_handling when they \
-take it back). When Tako tells you a handled session is waiting, read_terminal it and answer in the \
-spirit of the user's note and the agent's task: send_message for a question, answer_prompt approve or deny \
-for a permission prompt. Never approve anything you aren't sure the user would; if unsure, leave it: the \
-user is notified after 90 s. Tell the user briefly what you answered on their behalf. When the user says they're \
-leaving or are on their phone ("phone mode on"), call phone_mode on; when they're back, phone_mode off. \
-In Phone Mode you are the user's control center for every agent on this Mac, Claude and Codex alike: they talk \
-only to you, from their phone. Tako messages you the moment an agent waits, finishes, fails or exits; tell the \
-user right away, always naming the agent (@api) so they can answer or tag it, and say in one line what it needs. \
-Act on their answer with your tools: answer_prompt for a permission or plan, choose_option for any numbered \
-menu, trust_folder (after they say yes) for a folder, sign_in for a signed-out agent (send them the link and \
-code), interrupt_agent to stop one, set_mode to change its permission mode, restart_agent for a stuck or exited \
-one, send_message for anything in words. You have the user's hands too: press_keys presses any keys and \
-type_text types without your "Message from" framing, so drive a terminal as they would when no other tool \
-fits. These tools return the screen afterwards: check it, and keep going until the agent is doing what the \
-user asked. If send_message says a dialog is in the way, answer the dialog. When they tag an agent ("@web run the \
-tests"), send_message it and tell them when it's done. When they ask what's going on, list_terminals and answer \
-one line per agent. A message from Tako saying an agent is STILL waiting means the user hasn't seen it: send them \
-a push notification. Approve a risky request only after they say yes to that exact request (user_approved true). \
-Keep notes in \
-\(ControlPaths.sumiNotes): the user's preferences, project folders and open threads. Read it at the start \
-of a task when it may help, update it when you learn something durable, keep it under about 200 lines, and \
-never store secrets there. Never change the user's global settings (~/.claude, ~/.codex and the like, \
-such as a CLI's default model) unless they ask for exactly that. Start only the agents the user asked for. Keep replies short: say what you did in \
-a sentence or two.
-"""
-
 /// Sumi's tools: reading and messaging like any agent, plus starting agents anywhere,
 /// arranging the view, and closing terminals. No renaming: it stays @sumi.
 private let sumiToolDefinitions: [[String: Any]] = toolDefinitions.filter {
@@ -291,12 +238,13 @@ private let sumiToolDefinitions: [[String: Any]] = toolDefinitions.filter {
     ],
     [
         "name": "watch_terminal",
-        "description": "Get a message from Tako when an agent finishes its current or next turn (or fails or exits), with its last summary and your note. One message per call. Use it to chain work: hand one agent's result to the next.",
+        "description": "Get a message from Tako when an agent finishes its current or next turn (or fails or exits), with its last summary and your note. One message per call unless repeat is true. Use it to chain work: hand one agent's result to the next.",
         "inputSchema": [
             "type": "object",
             "properties": [
                 "terminal": ["type": "string", "description": "Label of the agent to wait on"],
                 "note": ["type": "string", "description": "What to do when it finishes, e.g. \"tell @web the new /orders endpoint is ready\""],
+                "repeat": ["type": "boolean", "description": "Hear every turn it finishes until it closes, not just the next one"],
             ],
             "required": ["terminal"],
         ],
@@ -498,7 +446,7 @@ private let sumiToolDefinitions: [[String: Any]] = toolDefinitions.filter {
             ],
         ],
     ],
-]
+] + sumiBoardToolDefinitions
 
 /// Tiles as the model writes them (bare labels as leaves) to the wire's `TileSpec`.
 private func tileSpec(_ value: Any) -> TileSpec? {
@@ -564,6 +512,7 @@ private func callTool(_ name: String, _ arguments: [String: Any], sessionID: Str
         req = ControlRequest(cmd: .watch)
         req.target = arguments["terminal"] as? String
         req.text = arguments["note"] as? String
+        req.label = (arguments["repeat"] as? Bool) == true ? "repeat" : nil
     case "session_history":
         req = ControlRequest(cmd: .history)
         req.text = "list"
@@ -667,7 +616,8 @@ private func callTool(_ name: String, _ arguments: [String: Any], sessionID: Str
         req.command = arguments["command"] as? String
         req.cwd = (arguments["cwd"] as? String).map { ($0 as NSString).expandingTildeInPath }
     default:
-        return ("unknown tool \(name)", true)
+        guard let board = sumiBoardRequest(name, arguments) else { return ("unknown tool \(name)", true) }
+        req = board
     }
     req.from = sessionID
 
