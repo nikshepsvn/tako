@@ -317,6 +317,23 @@ extension SessionStore {
         return held.isEmpty ? nil : held
     }
 
+    /// `task` with the team board of the project at `folder` after it, when the board has notes
+    /// or live claims; otherwise `task` unchanged. Git finds the project off main.
+    func withTeamBoard(_ task: String, folder: String) async -> String {
+        let path = (expandTilde(folder) as NSString).standardizingPath
+        let key: String
+        if let known = agentTools.projectKeys[path] {
+            key = known
+        } else if let main = sessions.first(where: { $0.git?.root == path })?.git?.mainRoot {
+            key = main
+        } else {
+            key = await Task.detached(priority: .userInitiated) { Review.mainRoot(of: path) ?? path }.value
+            agentTools.projectKeys[path] = key
+        }
+        guard let section = board(key).briefSection(project: Self.projectName(key)) else { return task }
+        return task + "\n\n" + section
+    }
+
     static func projectName(_ key: String) -> String {
         (key as NSString).lastPathComponent
     }
