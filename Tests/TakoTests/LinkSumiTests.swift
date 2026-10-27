@@ -121,9 +121,48 @@ final class LinkSumiTests: XCTestCase {
         XCTAssertTrue(text.hasPrefix("awaiting the user's approval"))
         XCTAssertTrue(sent.isEmpty)
         // Whitespace aside, the user's words go as typed.
-        userTurn(store, sumi!, "tell Alex:   back   in 10\nmin")
+        userTurn(store, sumi!, "tell Alex:   back   in 10  min")
         _ = peer(store, ["action": "send", "peer": "Alex", "text": "back in 10 min"])
         XCTAssertEqual(sent.map(\.1.text), ["back in 10 min"])
+    }
+
+    func testOnlyAnExplicitInstructionForThatPeerAndExactlyThatTextSendsAtOnce() {
+        let (store, sumi, _) = fixture()
+        store.link.addPeer(name: "Blake", key: LinkIdentity.generate().publicKey)
+        func goesAtOnce(_ prompt: String, _ text: String, to name: String = "Alex") -> Bool {
+            userTurn(store, sumi!, prompt)
+            let before = sent.count
+            _ = peer(store, ["action": "send", "peer": name, "text": text])
+            return sent.count > before
+        }
+        XCTAssertFalse(goesAtOnce("don't tell Alex yes", "yes"), "no instruction")
+        XCTAssertFalse(goesAtOnce("Please don't tell Alex: yes", "yes"), "not at the start of a sentence")
+        XCTAssertFalse(goesAtOnce("tell Blake: yes", "yes"), "another peer")
+        XCTAssertFalse(goesAtOnce("tell Alex: yes, after you send the logs", "yes"), "a part isn't the text")
+        XCTAssertFalse(goesAtOnce("tell Alex: yes", "yes, and here are the logs"), "nor is more")
+        XCTAssertTrue(goesAtOnce("Done for today. Tell @alex: \"see you  tomorrow\"", "see you tomorrow"))
+        XCTAssertTrue(goesAtOnce("message Blake: on my way", "on my way", to: "Blake"))
+        XCTAssertEqual(store.link.approvals.count, 5)
+
+        // One instruction, one send.
+        userTurn(store, sumi!, "tell Alex: lunch?")
+        _ = peer(store, ["action": "send", "peer": "Alex", "text": "lunch?"])
+        let sentBefore = sent.count
+        _ = peer(store, ["action": "send", "peer": "Alex", "text": "lunch?"])
+        XCTAssertEqual(sent.count, sentBefore, "the second send waits for approval")
+        // An ask needs an ask instruction.
+        userTurn(store, sumi!, "tell Alex: status?")
+        _ = peer(store, ["action": "ask", "peer": "Alex", "question": "status?"])
+        XCTAssertEqual(sent.count, sentBefore)
+    }
+
+    func testInstructionsParseOnePerLineOrSentence() {
+        XCTAssertEqual(LinkInstruction.parse("hey. tell @Alex: back in 10\nask blake:  which branch?  "), [
+            LinkInstruction(kind: .chat, peer: "Alex", text: "back in 10"),
+            LinkInstruction(kind: .ask, peer: "blake", text: "which branch?"),
+        ])
+        XCTAssertEqual(LinkInstruction.parse("don't tell Alex yes"), [])
+        XCTAssertEqual(LinkInstruction.normal("  “quoted  text” "), "quoted text")
     }
 
     func testTheRecipientMustBeAnExactPairedPeer() {

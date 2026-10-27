@@ -133,7 +133,7 @@ extension SessionStore {
         switch outgoing(action, args) {
         case .failure(let error): reply(.failure(error))
         case .success(let (message, peer)):
-            if userWrote(message.text ?? "") {
+            if consumeUserInstruction(message, to: peer) {
                 sendLink(message, to: peer) { error in
                     reply(error.map { .failure(PlanError("not sent: \($0)")) } ?? .success("sent to \(peer.name)" + (message.kind == .ask
                         ? " (request \(message.id)); their answer arrives as a peer message" : "")))
@@ -146,14 +146,19 @@ extension SessionStore {
         }
     }
 
-    /// Whether the user typed this text themselves in the turn Sumi is in, as in "tell Alex: I'm
-    /// done in 10". Only then does it go without asking: in the user's turn Sumi may still have
-    /// read files, tool output or other agents' words, and could pass them on.
-    func userWrote(_ text: String) -> Bool {
+    /// Whether the user ordered exactly this message in their own prompt this turn ("tell Alex:
+    /// back in 10"), and that order hasn't sent anything yet. Only then does it go without asking:
+    /// in the user's turn Sumi may still have read files, tool output or other agents' words.
+    /// Using it up here means a second send in the same turn needs approval.
+    func consumeUserInstruction(_ message: LinkMessage, to peer: TakoLink.Peer) -> Bool {
         guard let sumi, sumi.turnFromUser, let prompt = sumi.userPrompt else { return false }
-        func normal(_ value: String) -> String { value.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
-        let wanted = normal(text)
-        return !wanted.isEmpty && normal(prompt).contains(wanted)
+        let wanted = LinkInstruction.normal(message.text ?? "")
+        for (index, order) in LinkInstruction.parse(prompt).enumerated() where !sumi.userInstructionsUsed.contains(index) {
+            guard order.kind == message.kind, order.peer.lowercased() == peer.name.lowercased(), order.text == wanted, !wanted.isEmpty else { continue }
+            sumi.userInstructionsUsed.insert(index)
+            return true
+        }
+        return false
     }
 
     /// The message an action means, after every check that doesn't depend on whose turn it is.
@@ -285,5 +290,42 @@ extension SessionStore {
         }
         if !link.approvals.isEmpty { lines.append("\(link.approvals.count) message(s) waiting for the user's approval.") }
         return lines.joined(separator: "\n")
+    }
+}
+
+/// An explicit order in the user's prompt: `tell <peer>: <text>` (or message), `ask <peer>: <question>`,
+/// `answer <peer>: <text>`, at the start of a line or sentence, the peer with an optional @.
+/// "don't tell Alex yes" isn't one; the text is everything after the colon to the end of the line.
+struct LinkInstruction: Equatable {
+    var kind: LinkMessage.Kind
+    var peer: String
+    var text: String
+
+    private static let pattern = #"(?:^|[.!?;]\s+)(tell|message|ask|answer)\s+@?([^:\n]+?)\s*:[ \t]*([^\n]+)"#
+
+    static func parse(_ prompt: String) -> [LinkInstruction] {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive, .anchorsMatchLines]) else { return [] }
+        let range = NSRange(prompt.startIndex..., in: prompt)
+        return regex.matches(in: prompt, range: range).compactMap { match in
+            guard let verb = Range(match.range(at: 1), in: prompt), let peer = Range(match.range(at: 2), in: prompt),
+                  let text = Range(match.range(at: 3), in: prompt) else { return nil }
+            let kind: LinkMessage.Kind
+            switch prompt[verb].lowercased() {
+            case "ask": kind = .ask
+            case "answer": kind = .answer
+            default: kind = .chat
+            }
+            return LinkInstruction(kind: kind, peer: prompt[peer].trimmingCharacters(in: .whitespaces), text: normal(String(prompt[text])))
+        }
+    }
+
+    /// Whitespace collapsed and surrounding quotes dropped, for comparing the user's words with Sumi's.
+    static func normal(_ text: String) -> String {
+        var value = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let quotes: [(Character, Character)] = [("\"", "\""), ("'", "'"), ("“", "”"), ("‘", "’"), ("`", "`")]
+        while value.count >= 2, let first = value.first, let last = value.last, quotes.contains(where: { $0.0 == first && $0.1 == last }) {
+            value = String(value.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
+        }
+        return value
     }
 }

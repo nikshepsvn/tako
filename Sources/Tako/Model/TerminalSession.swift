@@ -108,7 +108,9 @@ final class TerminalSession: ObservableObject, Identifiable {
     var turnFromUser = true
     /// The prompt the user typed to start the current turn, while `turnFromUser`: Tako Link sends
     /// Sumi's message without asking only when the user wrote its text themselves.
-    var userPrompt: String?
+    var userPrompt: String? { didSet { userInstructionsUsed = [] } }
+    /// Which of `userPrompt`'s `tell <peer>: …` instructions already sent a message: each sends once.
+    var userInstructionsUsed: Set<Int> = []
     /// Its CLI's prompt and stop hooks report turns (a Codex with hooks on), so turns aren't
     /// guessed from work starting.
     var reportsTurnsByHook = false
