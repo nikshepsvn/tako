@@ -145,7 +145,7 @@ final class ProcessInspector: @unchecked Sendable {
         record(trees, processes: processes, children: children)
 
         var result: [String: ProcessSnapshot] = [:]
-        for (sessionID, tree) in trees {
+        for (sessionID, tree) in trees where !sessionID.hasPrefix(Self.unclaimedPrefix) {
             var pids: Set<pid_t> = []
             var ports: Set<Int> = []
             var snapshot = ProcessSnapshot()
@@ -246,12 +246,30 @@ final class ProcessInspector: @unchecked Sendable {
                     lock.unlock()
                 }
             }
-            if let sessionID { trees[sessionID, default: []].append(contentsOf: tree) }
+            if let sessionID {
+                trees[sessionID, default: []].append(contentsOf: tree)
+            } else if child.name == "login" {
+                // A terminal whose every process hides its environment (a shell that has only
+                // run built-in programs like /bin/sleep) still has jobs to stop at quit.
+                trees[Self.unclaimedKey(child.pid)] = tree
+            }
         }
         lock.lock()
         rootCache = rootCache.filter { alive.contains($0.key) }
         lock.unlock()
         return trees
+    }
+
+    /// Terminals not yet traced to a session are recorded under this prefix and their root's pid.
+    static let unclaimedPrefix = "terminal:"
+    static func unclaimedKey(_ root: pid_t) -> String { unclaimedPrefix + String(root) }
+
+    /// The unclaimed-terminal keys whose root process is no longer running.
+    static func endedTerminals(_ keys: [String], alive: Set<pid_t>) -> [String] {
+        keys.filter { key in
+            guard key.hasPrefix(unclaimedPrefix), let root = pid_t(key.dropFirst(unclaimedPrefix.count)) else { return false }
+            return !alive.contains(root)
+        }
     }
 
     private static let terminalChain: Set<String> = ["login", "zsh", "bash", "sh", "fish", "dash", "tcsh"]
@@ -343,7 +361,9 @@ final class ProcessInspector: @unchecked Sendable {
         // Listed now, not on `queue`: after a restart the new surface's shell has the same id.
         let processes = listProcesses() ?? []
         let children = Dictionary(grouping: processes, by: \.ppid)
-        let fresh = sessionTrees(children: children)[id] ?? []
+        let trees = sessionTrees(children: children)
+        let fresh = trees[id] ?? []
+        let unclaimedRoots = trees.keys.filter { $0.hasPrefix(Self.unclaimedPrefix) }
         queue.async { [self] in
             let byPID = Dictionary(processes.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
             // Double-forked daemons are launchd's children, but macOS still holds Tako
@@ -356,8 +376,61 @@ final class ProcessInspector: @unchecked Sendable {
             } + ttyOrphans(of: id, in: processes, mine: mine)
             sessionTTYs[id] = nil
             let previous = recorded.removeValue(forKey: id) ?? []
-            completion(Self.selectTree(session: id, seeds: (fresh + orphans).map(\.pid), recorded: previous,
-                                       byPID: byPID, children: children, mine: mine))
+            let taken = Self.selectTree(session: id, seeds: (fresh + orphans).map(\.pid), recorded: previous,
+                                        byPID: byPID, children: children, mine: mine)
+            // Never traced to this session: its terminal is the one that goes away now.
+            if taken.isEmpty && previous.isEmpty && !unclaimedRoots.isEmpty {
+                takeVanishedTerminal(among: unclaimedRoots, session: id, completion: completion)
+            } else {
+                completion(taken)
+            }
+        }
+    }
+
+    /// Waits up to `timeout` for exactly one of `keys`' terminals to end (the one being closed)
+    /// and hands over what it left. Two ending at once can't be told apart: those wait for quit.
+    private func takeVanishedTerminal(among keys: [String], session: String, timeout: TimeInterval = 3,
+                                      completion: @escaping @Sendable ([TrackedProcess]) -> Void) {
+        let deadline = Date().addingTimeInterval(timeout)
+        func check() {
+            let processes = listProcesses() ?? []
+            let gone = Self.endedTerminals(keys, alive: Set(processes.map(\.pid)))
+            guard gone.count == 1, let key = gone.first else {
+                if gone.isEmpty, Date() < deadline { queue.asyncAfter(deadline: .now() + 0.25, execute: check) } else { completion([]) }
+                return
+            }
+            completion(takeUnclaimed([key], processes: processes, as: session))
+        }
+        queue.asyncAfter(deadline: .now() + 0.25, execute: check)
+    }
+
+    /// Quitting: everything recorded under terminals never traced to a session, and orphans on
+    /// their terminals. Calls `completion` on `queue`.
+    func takeUnclaimedProcesses(completion: @escaping @Sendable ([TrackedProcess]) -> Void) {
+        let processes = listProcesses() ?? []
+        let children = Dictionary(grouping: processes, by: \.ppid)
+        let fresh = sessionTrees(children: children).filter { $0.key.hasPrefix(Self.unclaimedPrefix) }
+        queue.async { [self] in
+            for (key, tree) in fresh {
+                sessionTTYs[key, default: []].formUnion(tree.map(\.tty).filter { $0 != -1 })
+                recorded[key] = (recorded[key] ?? []) + tree.map { TrackedProcess(pid: $0.pid, start: $0.start, session: key) }
+            }
+            let keys = Set(recorded.keys).union(sessionTTYs.keys).filter { $0.hasPrefix(Self.unclaimedPrefix) }
+            completion(takeUnclaimed(Array(keys), processes: processes, as: nil))
+        }
+    }
+
+    /// Removes `keys` from the record: their recorded processes still running, orphans on their
+    /// terminals, and everything below. Runs on `queue`.
+    private func takeUnclaimed(_ keys: [String], processes: [ProcessEntry], as session: String?) -> [TrackedProcess] {
+        let byPID = Dictionary(processes.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
+        let children = Dictionary(grouping: processes, by: \.ppid)
+        let mine = getpid()
+        return keys.flatMap { key in
+            let orphans = ttyOrphans(of: key, in: processes, mine: mine)
+            sessionTTYs[key] = nil
+            return Self.selectTree(session: session ?? key, seeds: orphans.map(\.pid), recorded: recorded.removeValue(forKey: key) ?? [],
+                                   byPID: byPID, children: children, mine: mine)
         }
     }
 

@@ -141,9 +141,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hookServer?.stop()
         // Agents, shells and servers stop with Tako; agents resume at the next launch. A
         // detached terminal is only a window of its own, so it stops too.
-        let sessions = store.sessions.filter { $0.kind != .browser }.map(\.id.uuidString)
+        // Plus terminals never traced to a session: their shells ran only programs that hide
+        // their environment, so their jobs are recorded under the terminal instead.
+        let unclaimed = ProcessInspector.unclaimedPrefix
+        let sessions = store.sessions.filter { $0.kind != .browser }.map(\.id.uuidString) + [unclaimed]
         let inspector = self.inspector
-        SessionReaper.stopAllForQuit(sessions: sessions) { inspector.takeProcesses(ofSession: $0, completion: $1) }
+        SessionReaper.stopAllForQuit(sessions: sessions) { id, done in
+            if id == unclaimed { inspector.takeUnclaimedProcesses(completion: done) } else { inspector.takeProcesses(ofSession: id, completion: done) }
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
