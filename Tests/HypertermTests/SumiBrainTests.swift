@@ -201,13 +201,40 @@ final class SumiBrainTests: XCTestCase {
 
     // MARK: - Learned approvals
 
-    func testApprovalKeysAreCoarseButNeverCoverCompoundCommands() {
-        XCTAssertEqual(ApprovalMemory.key(tool: "Bash", request: "pnpm test --filter api"), "Bash(pnpm test)")
-        XCTAssertEqual(ApprovalMemory.key(tool: "Bash", request: "CI=1 git status -s"), "Bash(git status)")
-        XCTAssertEqual(ApprovalMemory.key(tool: "Bash", request: "ls -la src"), "Bash(ls)")
-        XCTAssertNil(ApprovalMemory.key(tool: "Bash", request: "pnpm test && git push"))
-        XCTAssertNil(ApprovalMemory.key(tool: "Bash", request: "echo $(cat .env)"))
+    func testApprovalKeysAreTheWholeCommand() {
+        XCTAssertEqual(ApprovalMemory.key(tool: "Bash", request: "pnpm test --filter api"), "Bash(pnpm test --filter api)")
+        XCTAssertEqual(ApprovalMemory.key(tool: "Bash", request: "git   status -s"), "Bash(git status -s)", "whitespace normalized")
+        XCTAssertEqual(ApprovalMemory.key(tool: "Bash", request: "make build"), "Bash(make build)")
         XCTAssertEqual(ApprovalMemory.key(tool: "Edit", request: "/repo/a.ts"), "Edit")
+        // One approved script never covers another, or the same runner with more arguments.
+        let test = ApprovalMemory.key(tool: "Bash", request: "npm run test")
+        XCTAssertEqual(test, "Bash(npm run test)")
+        for other in ["npm run deploy", "npm run test -- --update", "npm run", "make deploy", "cargo run", "go run ./x"] {
+            XCTAssertNotEqual(ApprovalMemory.key(tool: "Bash", request: other), test, other)
+        }
+        var memory = ApprovalMemory()
+        memory.learn(project: "/repo", key: test!, answer: .always)
+        XCTAssertFalse(memory.allows(project: "/repo", key: ApprovalMemory.key(tool: "Bash", request: "npm run deploy")!))
+        XCTAssertFalse(memory.allows(project: "/repo", key: ApprovalMemory.key(tool: "Bash", request: "npm run test:e2e")!))
+    }
+
+    func testCommandsThatCanHideWhatTheyRunHaveNoKey() {
+        let rejected = [
+            // Leading environment assignments.
+            "CI=1 git status", "LD_PRELOAD=/tmp/x.so make test", "PATH=/tmp:$PATH npm test",
+            // Programs given by path.
+            "./run-tests", "/tmp/npm test", "bin/build", "~/x",
+            // Chaining, pipes, redirection, substitution, background, newlines.
+            "pnpm test; rm x", "pnpm test && git push", "a || b", "ls | sh", "echo `id`", "echo $(id)",
+            "ls > out", "cat < in", "sleep 1 &", "make\ntest", "echo 'x'", "echo \"x\"", "ls *",
+            // Interpreters, wrappers and code runners.
+            "bash -c ls", "sh x", "zsh", "python3 script.py", "python -c print", "node x.js", "ruby x", "perl -e 1",
+            "env ls", "xargs rm", "eval ls", "sudo ls", "npx vitest", "bunx x", "uvx ruff", "deno run x",
+            "pnpm dlx create-x", "npm exec x", "yarn dlx x", "bun x y", "timeout 5 ls", "nohup make",
+        ]
+        for command in rejected {
+            XCTAssertNil(ApprovalMemory.key(tool: "Bash", request: command), command)
+        }
     }
 
     func testAlwaysIsRememberedPerProjectUntilDenied() {
@@ -231,7 +258,7 @@ final class SumiBrainTests: XCTestCase {
         XCTAssertTrue(store.sumiBrain.approvals.allows(project: project, key: "Bash(pnpm test)"))
 
         store.learnAnswer(api, approval: approval("git push origin main"), answer: .always)
-        XCTAssertNil(store.sumiBrain.approvals.record(project: project, key: "Bash(git push)"), "risky: never learned")
+        XCTAssertNil(store.sumiBrain.approvals.record(project: project, key: "Bash(git push origin main)"), "risky: never learned")
 
         store.sumiBrain.sumiAnswering = true
         store.learnAnswer(api, approval: approval("make build"), answer: .always)
@@ -243,15 +270,18 @@ final class SumiBrainTests: XCTestCase {
         let api = agent("api", state: .needsInput("Allow?"))
         let store = SessionStore(previewSessions: [api], previewLayout: .grid)
         let project = store.approvalProject(api)
-        store.sumiBrain.approvals.learn(project: project, key: "Bash(pnpm test)", answer: .always)
-        store.sumiBrain.approvals.learn(project: project, key: "Bash(git push)", answer: .always)
+        store.sumiBrain.approvals.learn(project: project, key: "Bash(pnpm test --watch=false)", answer: .always)
+        // Even if a risky request's key were ever learned, RiskyRequest still leaves it for the user.
+        store.sumiBrain.approvals.learn(project: project, key: "Bash(git push origin main)", answer: .always)
 
         let decided = Box()
         store.approvals[api.id] = approval("pnpm test --watch=false", reply: { decided.text = $0.text })
         XCTAssertTrue(store.learnedAlways(api))
-        XCTAssertEqual(store.approveAsUserAlwaysDoes(api), "Bash(pnpm test)")
+        XCTAssertEqual(store.approveAsUserAlwaysDoes(api), "Bash(pnpm test --watch=false)")
         XCTAssertTrue(decided.text?.contains("allow") == true, decided.text ?? "no reply")
         XCTAssertNil(store.approvals[api.id])
+        store.approvals[api.id] = approval("pnpm test --watch=true")
+        XCTAssertFalse(store.learnedAlways(api), "a different argument is a different request")
 
         store.approvals[api.id] = approval("git push origin main")
         XCTAssertFalse(store.learnedAlways(api))

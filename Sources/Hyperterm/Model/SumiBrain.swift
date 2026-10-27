@@ -281,23 +281,38 @@ struct ApprovalMemory: Codable, Equatable {
 
     static let keysPerProject = 80, projectCap = 40
 
-    /// A request's kind, coarse enough to recur and narrow enough to mean the same thing:
-    /// `Bash(pnpm test)`, `Bash(git status)`, `Edit`, `mcp__linear__search`. Compound shell lines
-    /// (pipes, `&&`, substitutions) have no key: one word of difference can change everything.
+    /// The exact request a remembered answer covers: `Bash(pnpm test --filter api)`, `Edit`,
+    /// `mcp__linear__search`. A shell command is keyed on its whole argv, never a prefix: one
+    /// approved `npm run test` must not approve `npm run deploy`. Anything whose meaning can hide
+    /// behind its text has no key at all, so it is never learned or answered automatically:
+    /// leading `VAR=value` (LD_PRELOAD, PATH), a program given by path, shell operators, quoting
+    /// or expansion, and programs that run arbitrary code (interpreters, wrappers, package
+    /// runners). RiskyRequest is checked separately on top of this, so a key never covers it.
     static func key(tool: String, request: String) -> String? {
         guard tool == "Bash" || tool == "exec_command" || tool == "shell" else {
             return tool.isEmpty || tool == "tool" ? nil : tool
         }
-        let command = request.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !command.isEmpty, command.rangeOfCharacter(from: CharacterSet(charactersIn: ";&|`$<>\n")) == nil else { return nil }
-        let words = command.split(separator: " ").map(String.init).drop { $0.contains("=") }
-        guard let program = words.first.map({ ($0 as NSString).lastPathComponent }) else { return nil }
-        let withSubcommand: Set<String> = ["git", "npm", "pnpm", "yarn", "bun", "npx", "cargo", "go", "swift", "make",
-                                          "docker", "gh", "uv", "poetry", "python", "python3", "xcodebuild", "deno", "mix", "bundle"]
-        guard withSubcommand.contains(program),
-              let sub = words.dropFirst().first(where: { !$0.hasPrefix("-") }) else { return "Bash(\(program))" }
-        return "Bash(\(program) \(sub))"
+        let command = request.trimmingCharacters(in: .whitespaces)
+        guard !command.isEmpty, command.rangeOfCharacter(from: unsafeCharacters) == nil else { return nil }
+        let words = command.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
+        guard let program = words.first, !program.contains("="), !program.contains("/"),
+              !runsArbitraryCode.contains(program) else { return nil }
+        if let sub = words.dropFirst().first, runsArbitraryCode.contains(program + " " + sub) { return nil }
+        return "Bash(" + words.joined(separator: " ") + ")"
     }
+
+    /// Chaining, pipes, redirection, background jobs, substitution, expansion, quoting, escapes,
+    /// globs and newlines: any of them and the text no longer says exactly what runs.
+    private static let unsafeCharacters = CharacterSet(charactersIn: ";&|`$<>()\n\r'\"\\*?[]{}~!#")
+
+    /// Programs (and program + subcommand) that execute whatever they are handed.
+    static let runsArbitraryCode: Set<String> = [
+        "bash", "sh", "zsh", "fish", "dash", "ksh", "csh", "tcsh", "python", "python3", "python2", "node", "ruby",
+        "perl", "php", "lua", "osascript", "env", "xargs", "eval", "exec", "source", ".", "sudo", "doas", "su",
+        "command", "builtin", "nohup", "time", "timeout", "nice", "watch", "npx", "bunx", "pnpx", "uvx", "deno",
+        "pnpm dlx", "yarn dlx", "npm exec", "pnpm exec", "yarn exec", "bun x", "bun exec", "uv tool", "pipx",
+        "find", "awk", "sed", "open",
+    ]
 
     mutating func learn(project: String, key: String, answer: PromptAnswer, now: Date = Date()) {
         var keys = projects[project] ?? [:]
