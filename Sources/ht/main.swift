@@ -28,7 +28,8 @@ usage: ht <command>
   heavy -- <command…>              wait for a heavy-job slot (builds, tests), then run the command
   doctor                           Tako's health: a day of hooks, messages and gc, memory, helpers, channels
   sumi                             start Sumi if it isn't running
-  link [status|on|off|name <n>|pair <peer>|confirm|cancel|unpair <peer>|approve <id> [text]|deny <id>]
+  link [status|on|off|name <n>|pair <peer>|confirm|cancel|unpair <peer>|approve <id> [text]|deny <id>
+       |add <name> <fingerprint> <host:port>]
                                    Tako Link: friends' Takos on this network (status prints JSON)
 """
 
@@ -248,7 +249,7 @@ case "link":
         $0.text = action
         $0.label = rest.first
         // approve <id> [edited text…]; name <the whole name>
-        if action == "approve", rest.count > 1 { $0.payload = rest.dropFirst().joined(separator: " ") }
+        if action == "approve" || action == "add", rest.count > 1 { $0.payload = rest.dropFirst().joined(separator: " ") }
         if action == "name" { $0.label = rest.joined(separator: " ") }
     })
     print(response.text ?? "ok")

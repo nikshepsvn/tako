@@ -25,6 +25,17 @@ extension ControlHandler {
             guard !link.isPairingBusy else { return .failure("a pairing is already in progress") }
             link.pair(with: nearby)
             return .success(text: "pairing with \(nearby.name); compare codes with ht link status")
+        case "add":
+            // add <name> <fingerprint> <host:port>, from the label and payload
+            let parts = (request.payload ?? "").split(separator: " ").map(String.init)
+            guard parts.count == 2, let colon = parts[1].lastIndex(of: ":"), let port = UInt16(parts[1][parts[1].index(after: colon)...]),
+                  link.settings.enabled else {
+                return .failure("usage: ht link add <name> <fingerprint> <host:port> (with Link on)")
+            }
+            guard link.addManual(name: label, fingerprint: parts[0], host: String(parts[1][..<colon]), port: port) else {
+                return .failure("not a fingerprint (16 hex characters) and port")
+            }
+            return .success(text: "added \(label) at \(parts[1])")
         case "confirm":
             guard link.pairing?.phase == .comparing else { return .failure("no code to confirm yet") }
             link.confirmPairing()
@@ -43,7 +54,7 @@ extension ControlHandler {
             store.denyLink(label)
             return .success(text: "denied")
         default:
-            return .failure("ht link: status, on, off, name, pair, confirm, cancel, unpair, approve or deny")
+            return .failure("ht link: status, on, off, name, add, pair, confirm, cancel, unpair, approve or deny")
         }
     }
 
@@ -65,6 +76,7 @@ extension ControlHandler {
         let object: [String: Any] = [
             "enabled": link.settings.enabled,
             "status": link.status,
+            "discovery": link.discovery,
             "name": link.displayName,
             "fingerprint": link.identity.fingerprint,
             "port": link.port.map { Int($0) } ?? 0,

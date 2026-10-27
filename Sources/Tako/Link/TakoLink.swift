@@ -51,9 +51,15 @@ final class TakoLink: ObservableObject {
 
     @Published private(set) var settings: Settings
     @Published private(set) var nearby: [Nearby] = []
+    /// Found by Bonjour, and added by hand (`ht link add`), which `nearby` merges.
+    private var discovered: [Nearby] = []
+    private var manual: [Nearby] = []
     @Published private(set) var pairing: Pairing?
     /// The listener's state in a few words, for Settings.
     @Published private(set) var status = "Off"
+    /// Bonjour's side: whether the service registered and the browser runs. A Mac that denied
+    /// Tako local-network access shows it here ("browsing: waiting …").
+    @Published private(set) var discovery = ""
     /// Sumi's outgoing messages waiting for the user's Send, Edit or Deny.
     @Published var approvals: [LinkApproval] = []
     /// Recent messages both ways, for the Sumi dock. Memory only.
@@ -179,6 +185,15 @@ final class TakoLink: ObservableObject {
         listener.newConnectionHandler = { [weak self] connection in
             MainActor.assumeIsolated { self?.accept(connection) }
         }
+        listener.serviceRegistrationUpdateHandler = { [weak self] change in
+            MainActor.assumeIsolated {
+                switch change {
+                case .add: self?.note("advertised")
+                case .remove: self?.note("not advertised")
+                @unknown default: break
+                }
+            }
+        }
         listener.stateUpdateHandler = { [weak self] state in
             MainActor.assumeIsolated { self?.listenerChanged(state) }
         }
@@ -188,6 +203,16 @@ final class TakoLink: ObservableObject {
         let browser = NWBrowser(for: .bonjourWithTXTRecord(type: Self.serviceType, domain: nil), using: .tcp)
         browser.browseResultsChangedHandler = { [weak self] results, _ in
             MainActor.assumeIsolated { self?.update(results) }
+        }
+        browser.stateUpdateHandler = { [weak self] state in
+            MainActor.assumeIsolated {
+                switch state {
+                case .ready: self?.note("browsing")
+                case .waiting(let error): self?.note("browsing: waiting (\(error.localizedDescription))")
+                case .failed(let error): self?.note("browsing failed (\(error.localizedDescription))")
+                default: break
+                }
+            }
         }
         self.browser = browser
         browser.start(queue: .main)
@@ -200,6 +225,9 @@ final class TakoLink: ObservableObject {
         browser?.cancel()
         browser = nil
         nearby = []
+        discovered = []
+        manual = []
+        discovery = ""
         connections.values.forEach { $0.channel.close("Link turned off") }
         connections = [:]
         open = [:]
@@ -209,6 +237,15 @@ final class TakoLink: ObservableObject {
     }
 
     var port: UInt16? { listener?.port?.rawValue }
+
+    /// Keeps the latest word from each of the service and the browser.
+    private func note(_ word: String) {
+        var parts = discovery.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }
+        let isBrowser = word.hasPrefix("browsing")
+        parts.removeAll { $0.hasPrefix("browsing") == isBrowser }
+        parts.append(word)
+        discovery = parts.sorted().joined(separator: "; ")
+    }
 
     private func listenerChanged(_ state: NWListener.State) {
         switch state {
@@ -223,15 +260,34 @@ final class TakoLink: ObservableObject {
         }
     }
 
+    /// A Tako at a known address, for networks where Bonjour doesn't reach (mDNS blocked, another
+    /// subnet, local-network access denied) and for tests. It still has to pair: the fingerprint
+    /// only names the entry, and pairing checks the key behind it.
+    func addManual(name: String, fingerprint: String, host: String, port: UInt16) -> Bool {
+        guard let nwPort = NWEndpoint.Port(rawValue: port), fingerprint.range(of: "^[0-9a-f]{16}$", options: .regularExpression) != nil,
+              fingerprint != identity.fingerprint else { return false }
+        manual.removeAll { $0.fingerprint == fingerprint }
+        manual.append(Nearby(name: LinkChannel.cleanName(name), fingerprint: fingerprint,
+                             endpoint: .hostPort(host: NWEndpoint.Host(host), port: nwPort)))
+        mergeNearby()
+        return true
+    }
+
+    private func mergeNearby() {
+        guard settings.enabled else { nearby = []; return }
+        nearby = (discovered + manual.filter { entry in !discovered.contains { $0.fingerprint == entry.fingerprint } })
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
     private func update(_ results: Set<NWBrowser.Result>) {
-        nearby = results.compactMap { result -> Nearby? in
+        discovered = results.compactMap { result -> Nearby? in
             guard case .bonjour(let txt) = result.metadata, let fingerprint = txt["fp"], fingerprint != identity.fingerprint else { return nil }
             var name = txt["name"]
             if name == nil, case .service(let service, _, _, _) = result.endpoint { name = service }
             return Nearby(name: LinkChannel.cleanName(name), fingerprint: fingerprint, endpoint: result.endpoint)
         }
         .reduce(into: [Nearby]()) { list, item in if !list.contains(where: { $0.fingerprint == item.fingerprint }) { list.append(item) } }
-        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        mergeNearby()
     }
 
     // MARK: - Connections
