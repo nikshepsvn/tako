@@ -248,6 +248,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func evenOutTiles() { terminalArea.evenOutTiles() }
+    func moveFocusedTile(to edge: LayoutEdge) { terminalArea.moveFocusedTile(to: edge) }
 
     private func bindStore() {
         let shelf = NSHostingView(rootView: ShelfButton(store: store))

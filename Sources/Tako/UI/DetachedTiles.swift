@@ -51,7 +51,7 @@ final class DetachedTiles: NSObject, NSWindowDelegate {
             tile.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -Space.xs),
         ])
         window.contentView = content
-        window.addTitlebarAccessoryViewController(returnButton())
+        window.addTitlebarAccessoryViewController(titlebarControls(for: window))
         tiles[session.id] = tile
         tile.setVisible(true)
 
@@ -142,20 +142,128 @@ final class DetachedTiles: NSObject, NSWindowDelegate {
         tiles.values.first { $0.window === window }?.session
     }
 
-    private func returnButton() -> NSTitlebarAccessoryViewController {
-        let button = NSButton(image: NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: "Return to Grid")!,
-                              target: self, action: #selector(returnToGrid(_:)))
-        button.isBordered = false
-        button.contentTintColor = Ink.text.withAlphaComponent(0.6)
-        button.toolTip = "Return to the grid"
-        button.frame = NSRect(x: 0, y: 0, width: 28, height: 22)
+    /// Snap ▾ and a worded Dock Back. Dragging to a screen edge is left to macOS 15's own tiling,
+    /// which already previews and snaps halves and quarters; this menu adds the same targets
+    /// one click away, on the window itself.
+    private func titlebarControls(for window: NSWindow) -> NSTitlebarAccessoryViewController {
+        let snap = NSPopUpButton(frame: .zero, pullsDown: true)
+        snap.isBordered = false
+        snap.addItem(withTitle: "")
+        snap.item(at: 0)?.image = NSImage(systemSymbolName: "rectangle.split.2x2", accessibilityDescription: "Snap")
+        for group in WindowSnap.groups {
+            if snap.numberOfItems > 1 { snap.menu?.addItem(.separator()) }
+            for region in group {
+                let item = NSMenuItem(title: region.title, action: #selector(snap(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = SnapChoice(window: window, region: region)
+                item.image = NSImage(systemSymbolName: region.symbol, accessibilityDescription: nil)
+                snap.menu?.addItem(item)
+            }
+        }
+        snap.toolTip = "Snap to a half, a quarter or the whole screen"
+        snap.setAccessibilityLabel("Snap window")
+        snap.contentTintColor = Ink.text.withAlphaComponent(0.6)
+
+        let dock = NSButton(title: "Dock Back", image: NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: nil)!,
+                            target: self, action: #selector(returnToGrid(_:)))
+        dock.isBordered = false
+        dock.imagePosition = .imageLeading
+        dock.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
+        dock.contentTintColor = Ink.text.withAlphaComponent(0.75)
+        dock.toolTip = "Put this terminal back in the main window's canvas"
+        dock.setAccessibilityLabel("Dock back into the canvas")
+
+        let stack = NSStackView(views: [snap, dock])
+        stack.spacing = Space.s
+        stack.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: Space.s)
+        stack.frame = NSRect(x: 0, y: 0, width: stack.fittingSize.width, height: 22)
         let accessory = NSTitlebarAccessoryViewController()
-        accessory.view = button
+        accessory.view = stack
         accessory.layoutAttribute = .trailing
         return accessory
     }
 
+    @objc private func snap(_ sender: NSMenuItem) {
+        guard let choice = sender.representedObject as? SnapChoice, let window = choice.window else { return }
+        snap(window, to: choice.region)
+    }
+
+    /// Moves `window` onto `region` of its screen's visible frame: under the menu bar, beside the Dock.
+    func snap(_ window: NSWindow, to region: WindowSnap) {
+        guard let visible = (window.screen ?? NSScreen.main)?.visibleFrame else { return }
+        window.setFrame(region.frame(in: visible), display: true, animate: !Motion.reduced)
+    }
+
     @objc private func returnToGrid(_ sender: NSButton) {
         if let window = sender.window, let session = session(in: window) { onReturn?(session) }
+    }
+}
+
+/// A Snap menu item's payload; weak, so the menu never keeps a closed window alive.
+private final class SnapChoice: NSObject {
+    weak var window: NSWindow?
+    let region: WindowSnap
+
+    init(window: NSWindow, region: WindowSnap) {
+        self.window = window
+        self.region = region
+    }
+}
+
+/// Where a detached window can snap on its screen. Pure geometry, unit-tested.
+enum WindowSnap: String, CaseIterable {
+    case leftHalf, rightHalf, topHalf, bottomHalf
+    case topLeft, topRight, bottomLeft, bottomRight
+    case maximize
+
+    static let groups: [[WindowSnap]] = [[.leftHalf, .rightHalf, .topHalf, .bottomHalf],
+                                         [.topLeft, .topRight, .bottomLeft, .bottomRight], [.maximize]]
+
+    var title: String {
+        switch self {
+        case .leftHalf: return "Left Half"
+        case .rightHalf: return "Right Half"
+        case .topHalf: return "Top Half"
+        case .bottomHalf: return "Bottom Half"
+        case .topLeft: return "Top Left Quarter"
+        case .topRight: return "Top Right Quarter"
+        case .bottomLeft: return "Bottom Left Quarter"
+        case .bottomRight: return "Bottom Right Quarter"
+        case .maximize: return "Fill Screen"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .leftHalf: return "rectangle.lefthalf.filled"
+        case .rightHalf: return "rectangle.righthalf.filled"
+        case .topHalf: return "rectangle.tophalf.filled"
+        case .bottomHalf: return "rectangle.bottomhalf.filled"
+        case .topLeft: return "rectangle.inset.topleft.filled"
+        case .topRight: return "rectangle.inset.topright.filled"
+        case .bottomLeft: return "rectangle.inset.bottomleft.filled"
+        case .bottomRight: return "rectangle.inset.bottomright.filled"
+        case .maximize: return "rectangle.inset.filled"
+        }
+    }
+
+    /// The frame within `visible` (screen coordinates, y up), on whole points.
+    func frame(in visible: NSRect) -> NSRect {
+        let halfWidth = (visible.width / 2).rounded(.down), halfHeight = (visible.height / 2).rounded(.down)
+        let left = NSRect(x: visible.minX, y: visible.minY, width: halfWidth, height: visible.height)
+        let right = NSRect(x: visible.minX + halfWidth, y: visible.minY, width: visible.width - halfWidth, height: visible.height)
+        let top = NSRect(x: visible.minX, y: visible.minY + halfHeight, width: visible.width, height: visible.height - halfHeight)
+        let bottom = NSRect(x: visible.minX, y: visible.minY, width: visible.width, height: halfHeight)
+        switch self {
+        case .leftHalf: return left
+        case .rightHalf: return right
+        case .topHalf: return top
+        case .bottomHalf: return bottom
+        case .topLeft: return left.intersection(top)
+        case .topRight: return right.intersection(top)
+        case .bottomLeft: return left.intersection(bottom)
+        case .bottomRight: return right.intersection(bottom)
+        case .maximize: return visible
+        }
     }
 }

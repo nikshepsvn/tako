@@ -423,7 +423,7 @@ struct TileHeader: View {
     private func header(compact: Bool) -> some View {
         let snapshot = model.snapshot
         return HStack(spacing: Space.s) {
-            KindMark(kind: snapshot.kind)
+            KindMark(kind: snapshot.kind, font: Typeface.body)
                 .foregroundStyle(snapshot.kind.tint)
                 .frame(width: Space.l)
             Text(snapshot.label)
@@ -440,9 +440,9 @@ struct TileHeader: View {
             }
             Spacer(minLength: Space.xs)
             if snapshot.state.needsAttention {
-                StatusPill(text: "Needs you", tint: Palette.attention)
+                StatusPill(text: "Needs you", symbol: AgentState.needsInput("").glyph, tint: Palette.attention)
             } else if snapshot.finished {
-                StatusPill(text: "✓ Done", tint: Palette.running)
+                StatusPill(text: "Done", symbol: "checkmark.circle.fill", tint: Palette.running)
             }
             if let overlap = snapshot.overlap, !compact {
                 Tag(text: overlap.title, tint: Palette.attention).help(overlap.detail)
@@ -455,11 +455,10 @@ struct TileHeader: View {
                 BrowserDriverBadge(label: snapshot.label)
             } else if hovering || compact {
                 controls(compact: compact)
-            } else if snapshot.asleep {
-                AsleepMark().help("Asleep · type or send a message to wake it")
-            } else {
-                StatusDot(state: snapshot.state, size: 6)
-                    .help(snapshot.statusWord)
+            } else if !snapshot.state.needsAttention && !snapshot.finished {
+                // The pill already says it; the glyph would repeat it.
+                StateGlyph(state: snapshot.state, done: snapshot.statusWord == "Done", asleep: snapshot.asleep)
+                    .help(snapshot.asleep ? "Asleep · type or send a message to wake it" : snapshot.statusWord)
             }
         }
         .padding(.leading, Space.m)
@@ -514,10 +513,13 @@ struct TileHeader: View {
 /// The arrival marker in a header: text in the color on a 15% tint of it. Never truncates; the title and summary give way first.
 private struct StatusPill: View {
     let text: String
+    /// The same glyph the sidebar shows for the state, so shape agrees everywhere.
+    let symbol: String
     let tint: Color
 
     var body: some View {
-        Text(text)
+        Label(text, systemImage: symbol)
+            .labelStyle(CompactLabelStyle())
             .font(Typeface.caption.weight(.semibold))
             .foregroundStyle(tint)
             .padding(.horizontal, Space.s)

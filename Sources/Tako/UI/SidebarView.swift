@@ -150,7 +150,10 @@ struct AgentRow: View {
                     .truncationMode(.middle)
                     .layoutPriority(1)
                 if let risk = session.atRisk {
-                    Circle().fill(Palette.attention).frame(width: 6, height: 6)
+                    // A branch, not a dot: the unread dot beside it differed only by color.
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(Typeface.caption.weight(.semibold))
+                        .foregroundStyle(Palette.attention)
                         .help(risk.headline(base: session.spec.baseBranch) + ". Closing it will ask first.")
                         .accessibilityLabel("Has work that isn't merged")
                 }
@@ -339,12 +342,14 @@ struct StateLabel: View {
     var body: some View {
         // Only the clock ticks; the rest of the row re-renders when the session changes.
         TimelineView(.periodic(from: .now, by: 15)) { context in
-            // Two Texts joined, so the symbol stays a symbol (interpolating it into a String prints
-            // the Image's description).
-            ((session.isAsleep ? Text(Image(systemName: "moon.zzz")) + Text(" ") : Text(verbatim: "")) + Text(text(now: context.date)))
-            .font(Typeface.caption.weight(session.state.needsAttention ? .semibold : .regular).monospacedDigit())
-            .foregroundStyle(color)
-            .lineLimit(1)
+            // The glyph says the state by shape, the words by name; color is the third cue, not the only one.
+            HStack(spacing: Space.xs) {
+                StateGlyph(state: session.state, done: isDone, asleep: session.isAsleep)
+                Text(text(now: context.date))
+                    .font(Typeface.caption.weight(session.state.needsAttention ? .semibold : .regular).monospacedDigit())
+                    .foregroundStyle(color)
+                    .lineLimit(1)
+            }
             .fixedSize()
         }
     }
@@ -356,7 +361,7 @@ struct StateLabel: View {
         switch session.state {
         case .working: return "Working \(since)"
         case .needsInput: return "Needs you"
-        case .idle: return "\(isDone ? "✓ " : "")\(session.statusWord) · \(since)"
+        case .idle: return "\(session.statusWord) · \(since)"
         default: return session.statusWord
         }
     }
@@ -672,9 +677,10 @@ private struct UtilityRow: View {
 
     var body: some View {
         HStack(spacing: Space.s) {
-            KindMark(kind: session.kind)
+            KindMark(kind: session.kind, font: Typeface.body)
                 .foregroundStyle(driver == nil ? Tone.muted : Palette.working)
                 .frame(width: Size.avatar)
+                .accessibilityLabel(session.kind.displayName)
             VStack(alignment: .leading, spacing: 0) {
                 Text(session.label).font(Typeface.body).lineLimit(1)
                 if session.kind == .browser {
@@ -691,7 +697,7 @@ private struct UtilityRow: View {
             }
             if session.kind != .browser {
                 PortChips(ports: session.ports, compact: true)
-                StatusDot(state: session.state, size: 6)
+                StateGlyph(state: session.state)
             }
         }
         .padding(.leading, nested ? Size.avatar + Space.s : 0)
@@ -945,7 +951,9 @@ private struct WindowControls: View {
                     }
                 }
             } label: {
-                Image(systemName: "plus").font(Typeface.body.weight(.medium)).foregroundStyle(Tone.muted)
+                // The same face as the IconButtons beside it.
+                Image(systemName: "plus").font(Typeface.caption.weight(.semibold)).foregroundStyle(Tone.muted)
+                    .frame(width: Size.iconButton, height: Size.iconButton)
             } primaryAction: {
                 actions.newSession()
             }
@@ -953,6 +961,7 @@ private struct WindowControls: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .help("New terminal (⌘N)")
+            .accessibilityLabel("New terminal")
         }
         .frame(height: Size.iconButton)
     }
@@ -1031,7 +1040,7 @@ private struct WaitingBadge: View {
             if NSEvent.modifierFlags.contains(.option) { showsStandup.toggle() } else { action() }
         } label: {
             HStack(spacing: Space.xs) {
-                Circle().fill(Palette.attention).frame(width: 6, height: 6)
+                StateGlyph(state: .needsInput(""))
                 Text(String(count)).monospacedDigit()
             }
             .font(Typeface.caption.weight(.semibold))
@@ -1039,6 +1048,8 @@ private struct WaitingBadge: View {
             .padding(.horizontal, Space.s)
             .frame(height: Size.iconButton)
             .background(Palette.attention.opacity(0.12), in: Capsule())
+            // A narrow sidebar used to squeeze the count out, leaving a bare dot.
+            .fixedSize()
         }
         .buttonStyle(.plain)
         .help((count == 1 ? "1 needs you" : "\(count) need you") + " · go to the one that has waited longest (⌘J); ⌥-click for standup (⌥⌘J)" + who)
@@ -1063,7 +1074,7 @@ struct CanvasBandControls: View {
             if waiting > 0 {
                 Button(action: store.selectNextNeedingAttention) {
                     HStack(spacing: Space.xs + 2) {
-                        Circle().fill(Palette.attention).frame(width: 6, height: 6)
+                        StateGlyph(state: .needsInput(""))
                         Text(waiting == 1 ? "1 needs you" : "\(waiting) need you")
                         KeyboardHint(keys: "⌘J")
                     }

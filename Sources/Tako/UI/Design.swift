@@ -66,6 +66,8 @@ enum Size {
     static let avatar: CGFloat = 22
     /// An agent's logo, sized to sit on a name's line.
     static let mark: CGFloat = 16
+    /// The fixed square a state glyph sits in, so rows align whatever the state.
+    static let stateGlyph: CGFloat = 12
     static let hairline: CGFloat = 1
     /// The window's titlebar band (there is no toolbar): the traffic lights sit in it.
     static let titlebar: CGFloat = 28
@@ -476,6 +478,54 @@ struct StatusDot: View {
     }
 }
 
+/// A session's state as a symbol whose shape carries the meaning as well as its color, so the
+/// states stay apart for color-blind users and in grayscale: a dotted ring starting, a half-filled
+/// ring working, a filled "!" needing you, a check done, an open ring idle, an octagon failed, a
+/// stop ring exited, a moon asleep. One weight and one size per slot, centered in a fixed square
+/// so rows line up whatever the glyph.
+struct StateGlyph: View {
+    let state: AgentState
+    var done = false
+    var asleep = false
+    /// The slot's side; the glyph is drawn a little smaller inside it.
+    var slot: CGFloat = Size.stateGlyph
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: slot - 3, weight: .semibold))
+            .foregroundStyle(color)
+            .frame(width: slot, height: slot)
+            .accessibilityLabel(asleep ? "Asleep" : done ? "Done" : state.phrase)
+    }
+
+    var symbol: String {
+        if asleep { return "moon.zzz.fill" }
+        if done { return "checkmark.circle.fill" }
+        return state.glyph
+    }
+
+    private var color: Color {
+        if asleep { return Tone.faint }
+        if done { return Palette.running }
+        return state == .idle ? Tone.faint : Palette.status(state)
+    }
+}
+
+extension AgentState {
+    /// The SF Symbol for a state. No two states share a shape.
+    var glyph: String {
+        switch self {
+        case .starting: return "circle.dotted"
+        case .working: return "circle.lefthalf.filled"
+        case .needsInput: return "exclamationmark.circle.fill"
+        case .idle: return "circle"
+        case .failed: return "xmark.octagon.fill"
+        case .exited: return "stop.circle"
+        case .running: return "circle.fill"
+        }
+    }
+}
+
 /// A sleeping agent: quiet, not a status that asks for anything.
 struct AsleepMark: View {
     var body: some View {
@@ -575,7 +625,8 @@ struct KindMark: View {
         } else if let letter = kind.monogram {
             Text(letter).font(font.weight(.bold)).fontDesign(.rounded)
         } else {
-            Image(systemName: kind.symbol).font(font.weight(.medium))
+            // One weight for every kind symbol, so a shell, a server and a browser read as a set.
+            Image(systemName: kind.symbol).font(font.weight(.medium)).imageScale(.medium)
         }
     }
 }
@@ -604,7 +655,7 @@ struct AgentAvatar: View {
 
     var body: some View {
         let isAgent = AgentMarkImage.image(for: kind) != nil
-        KindMark(kind: kind)
+        KindMark(kind: kind, font: Typeface.body)
             .foregroundStyle(kind.tint.opacity(dimmed ? 0.45 : 1))
             // The avatar's column stays the same width, so rows below line up with the name.
             .frame(width: Size.avatar, height: Size.avatar)
@@ -631,7 +682,8 @@ extension SessionKind {
         case .claude: return "c.square"
         case .codex: return "x.square"
         case .shell: return "terminal"
-        case .server: return "bolt"
+        // A rack reads as "a server"; the old bolt read as "power" or "fast".
+        case .server: return "server.rack"
         case .browser: return "globe"
         }
     }

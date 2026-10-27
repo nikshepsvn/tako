@@ -45,6 +45,12 @@ final class TerminalAreaView: NSView {
     var onReorder: (([UUID]) -> Void)?
     /// The tile being dragged and where it started.
     private var drag: (id: UUID, origin: NSRect)?
+    /// Where the dragged tile lands if released now.
+    private var pendingDrop: LayoutDrop?
+    /// A drag Escape cancelled; its remaining gesture events are ignored.
+    private var cancelledDrag: UUID?
+    private var escapeMonitor: Any?
+    private let snapPreview = SnapPreviewView()
     /// Where tiles go: the bounds, inset from the edges.
     private var tileArea: NSRect = .zero
     /// The shelf pill (servers and parked tiles) in the bottom-right corner, over the tiles. It takes
@@ -111,7 +117,7 @@ final class TerminalAreaView: NSView {
         tiles[session.id]?.removeFromSuperview()
         tiles[session.id] = nil
         visibleOrder.removeAll { $0 == session.id }
-        if drag?.id == session.id { drag = nil }
+        if drag?.id == session.id { clearDragChrome(); drag = nil }
         needsLayout = true
     }
 
@@ -126,6 +132,7 @@ final class TerminalAreaView: NSView {
         let nextVisible = preservesDrag ? visibleOrder : requested
         if !preservesDrag, let drag {
             tiles[drag.id]?.setLifted(false)
+            clearDragChrome()
             self.drag = nil
         }
         let changed = mode != self.mode || nextVisible != visibleOrder
@@ -300,43 +307,87 @@ final class TerminalAreaView: NSView {
 
     // MARK: - Drag to rearrange
 
-    /// The tile follows the pointer; dropped over another tile, the two trade places.
+    /// The tile follows the pointer while a translucent preview shows where it will land: half
+    /// of the tile under the pointer (split it), its center (trade places), or a canvas edge (a
+    /// full column or row). Escape puts it back.
     private func dragTile(_ id: UUID, by translation: CGSize) {
-        guard multiTile, let tile = tiles[id] else { return }
+        guard cancelledDrag != id, multiTile, let tile = tiles[id] else { return }
         if drag == nil {
             drag = (id, tile.frame)
             tile.setLifted(true)
             onSelectTile?(id)
             updateHandles()
+            watchForEscape()
         }
         guard let origin = drag?.origin else { return }
         // SwiftUI's global space grows downward; this view's grows upward.
         tile.frame.origin = CGPoint(x: origin.minX + translation.width, y: origin.minY - translation.height)
-        let center = CGPoint(x: tile.frame.midX, y: tile.frame.midY)
-        for other in tiles.values where other !== tile && !other.isHidden { other.setDropTarget(false) }
-        if let target = dropTarget(for: id, at: center) { tiles[target]?.setDropTarget(true) }
+        let pointer = window.map { convert($0.mouseLocationOutsideOfEventStream, from: nil) }
+            ?? CGPoint(x: tile.frame.midX, y: tile.frame.midY)
+        showDrop(trees[mode]?.drop(at: pointer, dragging: id, in: tileArea), for: id)
     }
 
-    private func dropTarget(for id: UUID, at point: CGPoint) -> UUID? {
-        guard let frames = trees[mode]?.frames(in: tileArea) else { return nil }
-        return frames.first { $0.key != id && $0.value.contains(point) }?.key
+    /// Moves the preview only when the zone changes: one Core Animation frame change, no relayout.
+    private func showDrop(_ drop: LayoutDrop?, for id: UUID) {
+        let frame = drop.flatMap { trees[mode]?.preview($0, moving: id, in: tileArea) }
+        // A refused move (it would squeeze a tile too small) shows nothing and drops nowhere.
+        let next = frame == nil ? nil : drop
+        guard next != pendingDrop else { return }
+        pendingDrop = next
+        let target: UUID? = {
+            switch next {
+            case .swap(let other), .beside(let other, _): return other
+            default: return nil
+            }
+        }()
+        for (other, view) in tiles where other != id { view.setDropTarget(other == target) }
+        snapPreview.show(frame?.integral, in: self)
+        if let next { announce(next) }
+    }
+
+    /// VoiceOver hears the zone, since the preview is only visual.
+    private func announce(_ drop: LayoutDrop) {
+        let label = { (id: UUID) in self.tiles[id].map { "@" + $0.session.label } ?? "tile" }
+        let text: String
+        switch drop {
+        case .swap(let other): text = "Swap with \(label(other))"
+        case .beside(let other, let edge): text = "\(edge.rawValue.capitalized) of \(label(other))"
+        case .canvas(let edge): text = "\(edge.rawValue.capitalized) edge of the canvas"
+        }
+        NSAccessibility.post(element: self, notification: .announcementRequested,
+                             userInfo: [.announcement: text, .priority: NSAccessibilityPriorityLevel.medium.rawValue])
     }
 
     private func endDrag(_ id: UUID) {
+        if cancelledDrag == id { cancelledDrag = nil; return }
         guard drag?.id == id, let tile = tiles[id] else { return }
-        let center = CGPoint(x: tile.frame.midX, y: tile.frame.midY)
-        tiles.values.forEach { $0.setDropTarget(false) }
-        var swapped = false
-        if let target = dropTarget(for: id, at: center), var tree = trees[mode] {
-            tree.swap(id, target)
+        let drop = pendingDrop
+        clearDragChrome()
+        var moved = false
+        if let drop, var tree = trees[mode], tree.apply(drop, moving: id, in: tileArea) {
             trees[mode] = tree
             saveTree()
             // Before reconciling: an untouched tree is rebuilt from the visible order, which
-            // would put the two tiles straight back.
+            // would put the tiles straight back.
             visibleOrder = tree.leaves
-            swapped = true
+            moved = true
         }
         drag = nil
+        settle(tile)
+        if moved { onReorder?(visibleOrder) }
+    }
+
+    /// Escape mid-drag: the tile flies home and the rest of the gesture is ignored.
+    private func cancelDrag() {
+        guard let id = drag?.id, let tile = tiles[id] else { return }
+        cancelledDrag = id
+        clearDragChrome()
+        drag = nil
+        settle(tile)
+    }
+
+    /// Every tile to its frame in the current tree, then the lifted one sets down.
+    private func settle(_ tile: TileView) {
         let frames = currentFrames()
         NSAnimationContext.runAnimationGroup { context in
             context.duration = Motion.duration(Motion.standard)
@@ -346,7 +397,41 @@ final class TerminalAreaView: NSView {
             MainActor.assumeIsolated { tile.setLifted(false) }
         }
         updateHandles()
-        if swapped { onReorder?(visibleOrder) }
+    }
+
+    private func clearDragChrome() {
+        pendingDrop = nil
+        tiles.values.forEach { $0.setDropTarget(false) }
+        snapPreview.show(nil, in: self)
+        if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
+        escapeMonitor = nil
+    }
+
+    /// Only while a drag is live, so no key ever pays for it otherwise.
+    private func watchForEscape() {
+        guard escapeMonitor == nil else { return }
+        escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53, let self, self.drag != nil else { return event }
+            self.cancelDrag()
+            return nil
+        }
+    }
+
+    // MARK: - Keyboard moves
+
+    /// View › Move Tile (⌃⌥ + arrow): the focused tile becomes a full column or row on that side.
+    /// Beeps when there is nothing to move or the move would squeeze a tile too small.
+    func moveFocusedTile(to edge: LayoutEdge) {
+        guard multiTile, drag == nil, let id = lastFocused, visibleOrder.contains(id), var tree = trees[mode] else {
+            NSSound.beep(); return
+        }
+        tree.reconcile(visible: visibleOrder, in: tileArea)
+        guard tree.move(id, toCanvas: edge, in: tileArea) else { NSSound.beep(); return }
+        trees[mode] = tree
+        saveTree()
+        visibleOrder = tree.leaves
+        animateToLayout()
+        onReorder?(visibleOrder)
     }
 
     // MARK: - Geometry
@@ -355,6 +440,44 @@ final class TerminalAreaView: NSView {
     nonisolated static func visibleIDs(_ requested: [UUID], mounted: Set<UUID>) -> [UUID] {
         var seen = Set<UUID>()
         return requested.filter { mounted.contains($0) && seen.insert($0).inserted }
+    }
+}
+
+/// Where a dragged tile will land: a translucent pane drawn above every tile, the dragged one
+/// included. Pure Core Animation; it never takes a click.
+@MainActor
+final class SnapPreviewView: NSView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.backgroundColor = Ink.text.withAlphaComponent(0.08).cgColor
+        layer?.borderColor = Ink.focus.cgColor
+        layer?.borderWidth = 2
+        layer?.cornerRadius = Radius.pane
+        layer?.cornerCurve = .continuous
+        layer?.zPosition = 200
+        isHidden = true
+        setAccessibilityElement(false)
+    }
+
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    /// Shows at `frame` (nil hides). Glides between zones unless Reduce Motion is on.
+    func show(_ frame: NSRect?, in host: NSView) {
+        guard let frame else { isHidden = true; return }
+        if superview !== host || host.subviews.last !== self { host.addSubview(self, positioned: .above, relativeTo: nil) }
+        if isHidden {
+            self.frame = frame
+            isHidden = false
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Motion.duration(Motion.quick)
+            context.timingFunction = Motion.curve
+            animator().frame = frame
+        }
     }
 }
 
