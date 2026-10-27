@@ -933,7 +933,8 @@ private struct WindowControls: View {
             Spacer(minLength: Space.xs)
             let waiting = store.attentionCount
             if waiting > 0 {
-                WaitingBadge(count: waiting, labels: store.waitingSessions.map(\.label), store: store)
+                WaitingBadge(count: waiting, labels: store.waitingSessions.map(\.label), store: store,
+                             action: store.selectNextNeedingAttention)
             }
             Menu {
                 Button("New Terminal…", action: actions.newSession)
@@ -1009,13 +1010,14 @@ private struct QueuedTag: View {
     }
 }
 
-/// Shown only while sessions need you. Opens standup: every agent, what needs you first, each
-/// row a way to it. ⌘J still goes straight to the one that has waited longest.
+/// Shown only while sessions need you. A click still takes you to the one that has waited
+/// longest, as it always has; ⌥-click opens standup, every agent with what needs you first.
 private struct WaitingBadge: View {
     let count: Int
     /// Who is waiting, longest first: the coalesced banner's names, kept on screen.
     var labels: [String] = []
     let store: SessionStore
+    let action: () -> Void
     @State private var showsStandup = false
 
     private var who: String {
@@ -1025,7 +1027,9 @@ private struct WaitingBadge: View {
     }
 
     var body: some View {
-        Button { showsStandup.toggle() } label: {
+        Button {
+            if NSEvent.modifierFlags.contains(.option) { showsStandup.toggle() } else { action() }
+        } label: {
             HStack(spacing: Space.xs) {
                 Circle().fill(Palette.attention).frame(width: 6, height: 6)
                 Text(String(count)).monospacedDigit()
@@ -1037,9 +1041,9 @@ private struct WaitingBadge: View {
             .background(Palette.attention.opacity(0.12), in: Capsule())
         }
         .buttonStyle(.plain)
-        .help((count == 1 ? "1 needs you" : "\(count) need you") + " · standup of every agent (⌥⌘J); ⌘J goes to the one that has waited longest" + who)
+        .help((count == 1 ? "1 needs you" : "\(count) need you") + " · go to the one that has waited longest (⌘J); ⌥-click for standup (⌥⌘J)" + who)
         .accessibilityLabel(count == 1 ? "1 session needs you" : "\(count) sessions need you")
-        .accessibilityHint("Opens standup")
+        .accessibilityHint("Goes to the session that has waited longest")
         .popover(isPresented: $showsStandup, arrowEdge: .top) {
             StandupView(store: store) { showsStandup = false }
         }
