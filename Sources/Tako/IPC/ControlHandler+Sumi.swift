@@ -20,6 +20,8 @@ extension ControlHandler {
             send(store.planCommand(args))
         case "remember":
             send(store.rememberCommand(args))
+        case "doctor":
+            store.doctor { reply(.success(text: $0)) }
         case "recall":
             reply(.success(text: store.recall(project: args["project"] as? String)))
         default:

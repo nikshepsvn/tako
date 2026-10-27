@@ -137,12 +137,17 @@ let sumiBoardToolDefinitions: [[String: Any]] = [
             "properties": ["project": ["type": "string", "description": "A project folder, absolute or ~/…"]],
         ],
     ],
+    [
+        "name": "doctor",
+        "description": "Tako's own health, when the user asks or Tako seems off: a day of failed hooks, lost messages, notifications, leftover processes and gc, plus Tako's memory and trend, MCP helpers per agent, the browser, idle worktrees and the channels setup.",
+        "inputSchema": ["type": "object", "properties": [String: Any]()],
+    ],
 ]
 
 /// The control request for one of Sumi's board tools, or nil for any other tool. The model's
 /// arguments travel whole, as JSON, so the app reads them as written.
 func sumiBoardRequest(_ name: String, _ arguments: [String: Any]) -> ControlRequest? {
-    guard ["standup", "plan", "remember", "recall"].contains(name) else { return nil }
+    guard ["standup", "plan", "remember", "recall", "doctor"].contains(name) else { return nil }
     var request = ControlRequest(cmd: .sumi)
     request.text = name
     let data = (try? JSONSerialization.data(withJSONObject: arguments)) ?? Data("{}".utf8)

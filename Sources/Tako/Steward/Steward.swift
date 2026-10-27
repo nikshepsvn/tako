@@ -389,6 +389,17 @@ final class Steward: ObservableObject {
 
     // MARK: - Status
 
+    /// Tako's MCP helpers (`ht mcp`, `ht mcp-lazy`, `ht browser-mcp`) in each session's tree as of
+    /// the last tick, for `ht doctor`: a leak there multiplies by every agent.
+    func helperCounts() -> [UUID: Int] {
+        trees.mapValues { pids in
+            pids.filter { pid in
+                guard ProcessUsage.name(pid) == "ht", let argv = ProcessInspector.shared.arguments(pid), argv.count > 1 else { return false }
+                return ["mcp", "mcp-lazy", "browser-mcp"].contains(argv[1])
+            }.count
+        }
+    }
+
     func status() -> MachineStatus {
         let sessions = (store?.sessions ?? []).compactMap { session -> MachineStatus.Session? in
             guard let sample = samples[session.id] else { return nil }

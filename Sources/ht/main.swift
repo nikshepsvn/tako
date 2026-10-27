@@ -26,6 +26,7 @@ usage: ht <command>
   mcp-lazy --name n -- <command…>  run a stdio MCP server, started on first use (used by agents)
   hook <source> [payload]          forward an agent hook event (used by agents)
   heavy -- <command…>              wait for a heavy-job slot (builds, tests), then run the command
+  doctor                           Tako's health: a day of hooks, messages and gc, memory, helpers, channels
 """
 
 func fail(_ message: String, code: Int32 = 1) -> Never {
@@ -228,6 +229,9 @@ case "heavy":
 case "browser":
     let target = args.first.map { BrowserTarget.address($0, cwd: FileManager.default.currentDirectoryPath) }
     print(requireOK(request(.browser) { $0.from = callerSession; $0.url = target }).text ?? "")
+
+case "doctor":
+    print(requireOK(request(.doctor) { $0.from = callerSession }).text ?? "")
 
 case "-h", "--help", "help":
     print(usage)

@@ -40,6 +40,7 @@ enum ControlCommand: String, Codable {
     case logs          // target's output filtered: pattern (grep), errors in submit, since, lines
     // Sumi's on-demand cleanup:
     case orphans       // processes Tako started whose terminal is gone: text = list | kill, targets = pids
+    case doctor        // Tako's health summary, for the user (`ht doctor`) or Sumi
 }
 
 struct ControlRequest: Codable {
