@@ -193,3 +193,76 @@ struct TakoHealthSection: View {
         }
     }
 }
+
+/// Messages this agent sent other agents, and what became of each: the receipts Tako typed
+/// back to it, kept where the user can see them. Newest first; only shown once it has sent one.
+struct SentMessagesSection: View {
+    let entries: [SentMessageLog.Entry]
+    @State private var expanded = false
+
+    private static let collapsedCount = 4
+
+    var body: some View {
+        let recent = entries.sorted { $0.sentAt > $1.sentAt }
+        let open = recent.filter { !$0.outcome.isFinal }.count
+        VStack(alignment: .leading, spacing: Space.s) {
+            SectionHeader("Sent messages") {
+                Text(open > 0 ? "\(open) not landed" : String(recent.count)).monospacedDigit()
+            }
+            ForEach(expanded ? recent : Array(recent.prefix(Self.collapsedCount))) { entry in
+                row(entry)
+            }
+            if recent.count > Self.collapsedCount {
+                Button(expanded ? "Show fewer" : "Show all \(recent.count)") { expanded.toggle() }
+                    .buttonStyle(.plain).font(Typeface.caption).foregroundStyle(Tone.muted)
+            }
+        }
+    }
+
+    private func row(_ entry: SentMessageLog.Entry) -> some View {
+        VStack(alignment: .leading, spacing: Space.xxs) {
+            HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+                Image(systemName: "paperplane").font(Typeface.caption).foregroundStyle(Tone.faint)
+                Text("@" + entry.target).font(Typeface.callout.weight(.medium)).lineLimit(1)
+                if let id = entry.messageID {
+                    Text(id).font(Typeface.codeSmall).foregroundStyle(Tone.faint)
+                }
+                Spacer(minLength: Space.xs)
+                Tag(text: entry.outcome.title, tint: Self.tint(entry.outcome))
+                Text(elapsed(since: entry.sentAt)).font(Typeface.caption.monospacedDigit()).foregroundStyle(Tone.faint)
+            }
+            Text(entry.preview).font(Typeface.caption).foregroundStyle(Tone.muted).lineLimit(1).truncationMode(.tail)
+                .padding(.leading, Space.l + Space.xs)
+            if case .dropped(let why) = entry.outcome {
+                Text("Not delivered: " + why).font(Typeface.caption).foregroundStyle(Palette.failed).lineLimit(2)
+                    .padding(.leading, Space.l + Space.xs)
+            }
+        }
+        .help(Self.help(entry))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("To \(entry.target), \(entry.outcome.title), \(elapsed(since: entry.sentAt)) ago: \(entry.preview)")
+    }
+
+    static func tint(_ outcome: SentMessageLog.Outcome) -> Color {
+        switch outcome {
+        case .delivered: return Palette.running
+        case .queued, .channelUnconfirmed: return Tone.muted
+        case .stillWaiting, .typedInstead: return Palette.attention
+        case .dropped: return Palette.failed
+        }
+    }
+
+    private static func help(_ entry: SentMessageLog.Entry) -> String {
+        let what: String
+        switch entry.outcome {
+        case .delivered: what = "Reached @\(entry.target)."
+        case .queued: what = "Waiting in @\(entry.target)'s queue; it lands when @\(entry.target) is free."
+        case .channelUnconfirmed: what = "Handed to @\(entry.target)'s channel; Tako types it if Claude doesn't confirm it."
+        case .stillWaiting: what = "Still queued after a long while; it lands when @\(entry.target) is free."
+        case .typedInstead: what = "The channel never confirmed it, so Tako typed it into @\(entry.target) instead."
+        case .dropped(let why): what = "Not delivered: \(why)."
+        }
+        let changed = entry.updatedAt > entry.sentAt ? " Updated \(elapsed(since: entry.updatedAt)) ago." : ""
+        return "Sent \(entry.sentAt.formatted(date: .omitted, time: .shortened)). " + what + changed
+    }
+}

@@ -90,6 +90,7 @@ extension SessionStore {
             inbox.remove(at: index)
             self.channelInbox[session.id] = inbox.isEmpty ? nil : inbox
             self.channelLastSeen[session.id] = nil
+            self.sentMessages.update(message.id, .typedInstead)
             _ = session.deliver(text, from: nil)
         }
         return true
@@ -115,6 +116,7 @@ extension SessionStore {
     private func channelConfirmed(_ id: String, by session: TerminalSession) {
         guard let pending = channelUnconfirmed[id], pending.session == session.id else { return }
         channelUnconfirmed[id] = nil
+        sentMessages.update(id, .delivered)
         EventLog.record("message", session: session.label, "\(id) delivered (channel)",
                         fields: ["id": id, "outcome": "delivered", "via": "channel",
                                  "waited_s": Int(Date().timeIntervalSince(pending.message.sentAt))])
@@ -124,6 +126,7 @@ extension SessionStore {
     /// (later messages are typed until it polls again) and this one is typed instead.
     func channelConfirmationDue(_ id: String) {
         guard let pending = channelUnconfirmed.removeValue(forKey: id) else { return }
+        sentMessages.update(id, .typedInstead)
         guard let session = sessions.first(where: { $0.id == pending.session }) else {
             EventLog.record("message", "\(id) not confirmed by the channel; its terminal closed",
                             fields: ["id": id, "outcome": "not confirmed", "via": "channel"])
