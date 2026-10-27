@@ -78,6 +78,13 @@ struct ControlRequest: Codable {
     var note: String?
     /// For `approve` from Sumi in Phone Mode: the user said yes to this request on their phone.
     var userApproved: Bool?
+    /// For Sumi's `act` and `close`: the user asked for this directly, in their own words, in the
+    /// turn Sumi is acting in. Tako checks that the turn was the user's (`turnFromUser`).
+    var userRequested: Bool?
+    /// For Sumi's `close` with `userRequested`: close even with work at risk; the user said so.
+    var force: Bool?
+    /// For Sumi's `new`: seconds to wait for each agent to reach its prompt (0: don't wait).
+    var wait: Int?
     /// For `browser`: a page to open in the caller's browser (a URL, an address, or a file URL).
     var url: String?
     /// For `act` choose: option numbers, one per question of a form (the first alone for a menu).

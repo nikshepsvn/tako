@@ -100,6 +100,9 @@ final class TerminalSession: ObservableObject, Identifiable {
     var lastHookAt = Date.distantPast
     /// The current turn was started by another agent's message, not the user.
     var turnIsMessage = false
+    /// The current turn began with the user's own prompt: not another agent's message, not a
+    /// Tako event digest, not a channel event. Sumi's `user_requested` counts only in such a turn.
+    var turnFromUser = true
     /// Its CLI's prompt and stop hooks report turns (a Codex with hooks on), so turns aren't
     /// guessed from work starting.
     var reportsTurnsByHook = false

@@ -743,78 +743,107 @@ struct ControlHandler {
     }
 
     /// Sumi's hands on an agent: pick a question's option, trust its folder, sign it in, or stop
-    /// its turn. Only Sumi, and only where the store allows (Phone Mode or a handed-over session).
+    /// its turn. Only Sumi, and only where the store allows (Phone Mode, a handed-over session,
+    /// or what the user just asked for). Restart, interrupt and choose also take several
+    /// terminals or a pattern (`targets`), each answered on its own line.
     private func actForSumi(_ request: ControlRequest, reply: @escaping ControlServer.Reply) {
         guard callerSumi != nil else { reply(.failure("only Sumi acts on agents")); return }
+        if request.targets?.isEmpty == false { actOnMany(request, reply: reply); return }
         guard let target = resolve(request.target) else { reply(notFound(request.target)); return }
-        func send(_ result: Result<String, DelegationError>) {
+        actForSumi(on: target, request) { result in
             switch result {
             case .success(let text): reply(.success(text: text))
             case .failure(let error): reply(.failure(error.description))
             }
         }
+    }
+
+    func actForSumi(on target: TerminalSession, _ request: ControlRequest,
+                    completion send: @escaping (Result<String, DelegationError>) -> Void) {
         let userApproved = request.userApproved == true
+        let userRequested = request.userRequested == true
         switch request.text {
         case "choose":
             let options = request.options ?? request.count.map { [$0] } ?? []
-            store.chooseForSumi(target, options: options, userApproved: userApproved, completion: send)
+            store.chooseForSumi(target, options: options, userApproved: userApproved, userRequested: userRequested, completion: send)
         case "trust":
             send(store.trustForSumi(target, userApproved: userApproved))
         case "signin":
             store.signInForSumi(target, completion: send)
         case "interrupt":
-            store.interruptForSumi(target, hard: request.hard == true, completion: send)
+            store.interruptForSumi(target, hard: request.hard == true, userRequested: userRequested, completion: send)
         case "keys":
             store.pressKeysForSumi(target, keys: request.keys ?? [], userApproved: userApproved, completion: send)
         case "type":
             store.typeForSumi(target, text: request.label ?? "", submit: request.submit ?? true, userApproved: userApproved, completion: send)
         case "restart":
-            send(store.restartForSumi(target))
+            send(store.restartForSumi(target, userRequested: userRequested))
         case "mode":
             guard let mode = request.mode.flatMap(PermissionMode.init(rawValue:)) else {
-                reply(.failure("mode must be one of: " + PermissionMode.allCases.map(\.rawValue).joined(separator: ", ")))
+                send(.failure(DelegationError("mode must be one of: " + PermissionMode.allCases.map(\.rawValue).joined(separator: ", "))))
                 return
             }
             store.setModeForSumi(target, mode: mode, userApproved: userApproved, completion: send)
         default:
-            reply(.failure("act must be choose, trust, signin, interrupt, keys, type, restart or mode"))
+            send(.failure(DelegationError("act must be choose, trust, signin, interrupt, keys, type, restart or mode")))
         }
     }
 
-    /// Closing ends a process and whatever it hadn't saved, so the user confirms each one.
+    /// Closing ends a process and whatever it hadn't saved. The user confirms each close in Tako,
+    /// unless they asked Sumi for it directly (`userRequested`). Either way, work that exists
+    /// nowhere else keeps the terminal open, unless the user also said to close it anyway (`force`).
     private func closeForSumi(_ request: ControlRequest, reply: @escaping ControlServer.Reply) {
+        if request.targets?.isEmpty == false { closeMany(request, reply: reply); return }
         guard let target = resolve(request.target) else { reply(notFound(request.target)); return }
-        guard !target.isSumi else { reply(.failure("Sumi can't close itself")); return }
-        // Work that isn't merged or committed is never closed from here: the user decides on the agent itself.
+        closeForSumi(target, request) { result in
+            switch result {
+            case .success(let text): reply(.success(text: text))
+            case .failure(let error): reply(.failure(error.description))
+            }
+        }
+    }
+
+    func closeForSumi(_ target: TerminalSession, _ request: ControlRequest,
+                      completion: @escaping (Result<String, DelegationError>) -> Void) {
+        guard !target.isSumi else { return completion(.failure(DelegationError("Sumi can't close itself"))) }
+        let userRequested = request.userRequested == true
+        if let refusal = store.userRequestRefusal(userRequested) { return completion(.failure(refusal)) }
+        let force = userRequested && request.force == true
         let spec = target.spec
-        guard spec.isWorktree else { confirmClose(target, reply: reply); return }
+        let close = { [self] in
+            if userRequested { closeNow(target, completion: completion) } else { confirmClose(target, completion: completion) }
+        }
+        guard spec.isWorktree else { return close() }
         DispatchQueue.global(qos: .userInitiated).async {
             let risk = WorkAtRisk.evaluate(at: spec.workPath, base: spec.baseBranch)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    if let risk, !risk.isEmpty {
-                        reply(.failure("@\(target.label) left open: \(risk.headline(base: spec.baseBranch)). Tell the user; they close it from the agent itself."))
-                    } else {
-                        self.confirmClose(target, reply: reply)
-                    }
+                    guard let risk, !risk.isEmpty, !force else { return close() }
+                    completion(.failure(DelegationError("@\(target.label) left open: \(risk.headline(base: spec.baseBranch)). "
+                        + "Tell the user; if they say to close it anyway, call again with user_requested and force true")))
                 }
             }
         }
     }
 
-    private func confirmClose(_ target: TerminalSession, reply: @escaping ControlServer.Reply) {
+    private func closeNow(_ target: TerminalSession, completion: @escaping (Result<String, DelegationError>) -> Void) {
+        guard store.sessions.contains(where: { $0.id == target.id }) else {
+            return completion(.success("@\(target.label) was already closed"))
+        }
+        target.record(.note, "Closed by Sumi at the user's request")
+        store.close(target)
+        completion(.success("closed @\(target.label)"))
+    }
+
+    private func confirmClose(_ target: TerminalSession, completion: @escaping (Result<String, DelegationError>) -> Void) {
         store.confirmUnlessPhoneMode("Sumi wants to close @\(target.label)", abbreviateHome(target.spec.workPath)) { [store] approved in
-            guard approved else {
-                reply(.failure("the user kept @\(target.label) open"))
-                return
-            }
+            guard approved else { return completion(.failure(DelegationError("the user kept @\(target.label) open"))) }
             // It may have been closed while the sheet was up.
             guard store.sessions.contains(where: { $0.id == target.id }) else {
-                reply(.success(text: "@\(target.label) was already closed"))
-                return
+                return completion(.success("@\(target.label) was already closed"))
             }
             store.close(target)
-            reply(.success(text: "closed @\(target.label)"))
+            completion(.success("closed @\(target.label)"))
         }
     }
 

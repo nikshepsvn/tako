@@ -125,6 +125,7 @@ extension SessionStore {
             let prompt = json["prompt"] as? String
             // Another agent's message isn't the user's turn: no checkpoint for it.
             session.turnIsMessage = prompt.map(isAgentMessage) ?? false
+            session.turnFromUser = prompt.map(isUsersOwnPrompt) ?? false
             // A turn already opened before the hooks could report it isn't opened twice.
             if !session.turnIsMessage && !session.turnOpenedByGuess { checkpoint(session, phase: .start, prompt: prompt ?? "Turn") }
             session.turnOpenedByGuess = false

@@ -149,6 +149,8 @@ final class SessionStore: ObservableObject {
         if case .exited = session.state { return false }
         guard Self.channelsEnabled, session.kind == .claude, !session.isAsleep, session.state != .starting,
               let seen = channelLastSeen[session.id], Date().timeIntervalSince(seen) < 60 else { return false }
+        // At rest, a channel event starts a turn of its own with no prompt hook to say whose it is.
+        if session.isSumi, session.state != .working { session.turnFromUser = false }
         if let waiter = channelWaiters.removeValue(forKey: session.id) {
             var response = ControlResponse.success()
             response.messages = [text]
