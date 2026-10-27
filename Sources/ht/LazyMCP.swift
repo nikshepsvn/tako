@@ -303,7 +303,8 @@ private final class LazyProxy: @unchecked Sendable {
     private func startServer(replay: Bool) -> Bool {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = command
+        // npx stays running as the server's parent; a copy it already downloaded runs directly.
+        process.arguments = NpxCache.directCommand(command) ?? command
         let input = Pipe(), output = Pipe()
         process.standardInput = input
         process.standardOutput = output

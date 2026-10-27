@@ -168,20 +168,8 @@ private final class BrowserProxy: @unchecked Sendable {
 
     /// The pinned server's entry script in npx's cache, if an earlier npx run downloaded it.
     private func cachedServerScript() -> String? {
-        let name = "chrome-devtools-mcp"
-        let version = chromeDevtoolsMCP.split(separator: "@").last.map(String.init)
-        let cache = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".npm/_npx")
-        let entries = (try? FileManager.default.contentsOfDirectory(at: cache, includingPropertiesForKeys: nil)) ?? []
-        for entry in entries {
-            let package = entry.appendingPathComponent("node_modules/\(name)")
-            guard let data = try? Data(contentsOf: package.appendingPathComponent("package.json")),
-                  let manifest = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-                  manifest["version"] as? String == version,
-                  let bin = (manifest["bin"] as? [String: String])?[name] else { continue }
-            let script = package.appendingPathComponent(bin).standardizedFileURL.path
-            if FileManager.default.isReadableFile(atPath: script) { return script }
-        }
-        return nil
+        guard let version = chromeDevtoolsMCP.split(separator: "@").last.map(String.init) else { return nil }
+        return NpxCache.cachedBin(name: "chrome-devtools-mcp", version: version, cache: NpxCache.directory)
     }
 
     private func stopServer(_ process: Process) {
