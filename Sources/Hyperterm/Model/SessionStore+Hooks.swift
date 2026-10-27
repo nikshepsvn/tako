@@ -194,6 +194,7 @@ extension SessionStore {
             if session.runningSubagents.isEmpty, session.state == .idle {
                 reportToSumi(session, from: .working)
                 markFinished(session)
+                agentToolsStateChanged(session)
                 onStatusChange?()
             }
             return
