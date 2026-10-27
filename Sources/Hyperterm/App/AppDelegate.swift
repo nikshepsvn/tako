@@ -82,11 +82,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var stepsBeforeRestore = 2
 
     /// Restores after the sweep has stopped what the last run left, so a resumed agent or server
-    /// never overlaps its old copy (same conversation, same worktree lock, same port).
+    /// never overlaps its old copy (same conversation, same worktree lock, same port). Then
+    /// collects what closed sessions left behind.
     private func restoreWhenReady() {
         stepsBeforeRestore -= 1
         guard stepsBeforeRestore == 0 else { return }
         _ = store.restore()
+        store.collectLeftoverWork()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

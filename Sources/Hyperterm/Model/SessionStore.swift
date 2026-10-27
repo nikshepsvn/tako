@@ -419,6 +419,7 @@ final class SessionStore: ObservableObject {
             spec.memory = spec.memory ?? SessionMemory()
             spec.memory?.task = sanitizeMessage(task)
         }
+        recordWorktree(spec)
         let session = TerminalSession(spec: spec, resume: resume, task: task.map(sanitizeMessage))
         if let task, !task.isEmpty { session.record(.prompt, task) }
         session.store = self
@@ -484,6 +485,7 @@ final class SessionStore: ObservableObject {
             if sumiHears { addToSumiDigest(SumiEvent(label: session.label, kind: .stoppedHandling("it was closed"))) }
         }
         session.terminate()
+        collectWorktree(afterClosing: session.spec)
         codexServers.removeValue(forKey: session.id)?.close()
         codexHeldRequests[session.id] = nil
         dropChannel(for: session)
