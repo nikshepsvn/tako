@@ -20,6 +20,7 @@ final class InterfaceSnapshotTests: XCTestCase {
         let sessions = fixtures()
         defer { sessions.forEach { $0.terminate() } }
         let store = SessionStore(previewSessions: sessions)
+        v2State(store, sessions: sessions)
         store.inspectorTab = .info
         let actions = inertActions
 
@@ -72,9 +73,40 @@ final class InterfaceSnapshotTests: XCTestCase {
                     name: "empty-narrow", output: output)
         try capture(EmptyStateView(), size: NSSize(width: 1060, height: 760),
                     name: "empty-wide", output: output)
+        try capture(SumiPlanBoard(plan: store.sumiBrain.plan, select: { _ in }),
+                    size: NSSize(width: 380, height: 360), name: "sumi-plan-board", output: output)
+        try capture(NothingOnCanvasView(), size: NSSize(width: 720, height: 420),
+                    name: "nothing-on-canvas", output: output)
         try captureWorkspace(store: store, output: output)
         try captureWorkspace(store: SessionStore(previewSessions: []), output: output,
                              name: "workspace-empty", showInspector: false, captureNarrow: false)
+    }
+
+    /// v2 coordination state the new surfaces show: Sumi's plan, the team board, remembered
+    /// answers and a queued message.
+    private func v2State(_ store: SessionStore, sessions: [TerminalSession]) {
+        var plan = SumiPlan()
+        plan.goal = "Ship the workspace refresh"
+        _ = plan.upsert([
+            PlanTask(id: "t1", title: "Polish workspace layout", owner: "design-system", status: .done, note: "finished: 42 checks"),
+            PlanTask(id: "t2", title: "Validate API contracts", owner: "api-contracts", deps: ["t1"], status: .running),
+            PlanTask(id: "t3", title: "Navigation refresh", owner: "navigation", deps: ["t1"], status: .done),
+            PlanTask(id: "t4", title: "Write the release notes", deps: ["t2", "t3"], folder: "/workspace/atlas"),
+        ])
+        store.sumiBrain.plan = plan
+        let builder = sessions[0], waiting = sessions[1]
+        var board = TeamBoard()
+        board.loaded = true
+        _ = board.claim(["components/workspace.tsx"], owner: builder.id, label: builder.label, until: Date().addingTimeInterval(1800))
+        _ = board.claim(["api/**/*.ts"], owner: waiting.id, label: waiting.label, until: Date().addingTimeInterval(1800))
+        board.add(BoardNote(author: "api-contracts", text: "Empty responses now return 204, not 200 with []. Update callers.",
+                            date: Date().addingTimeInterval(-600)))
+        board.add(BoardNote(author: "design-system", text: "Workspace grid gap is 8pt everywhere; use Space.s.",
+                            date: Date().addingTimeInterval(-120)))
+        store.agentTools.boards["/workspace/atlas"] = board
+        store.sumiBrain.approvals.learn(project: "/workspace/atlas", key: "Bash(pnpm test)", answer: .always)
+        store.sumiBrain.approvals.learn(project: "/workspace/atlas", key: "Bash(git status)", answer: .approve)
+        _ = waiting.deliver("Rebase on main before running the suite", from: builder.label)
     }
 
     private var inertActions: SessionActions {
@@ -290,7 +322,9 @@ final class InterfaceSnapshotTests: XCTestCase {
     }
 
     private func capture<Content: View>(_ view: Content, size: NSSize, name: String, output: URL) throws {
-        let host = NSHostingView(rootView: view.environment(\.colorScheme, .dark))
+        // The panes' fill comes from their AppKit backing in the app; stand in for it here so a
+        // capture isn't transparent.
+        let host = NSHostingView(rootView: view.background(Tone.deep).environment(\.colorScheme, .dark))
         host.sizingOptions = []
         host.frame = NSRect(origin: .zero, size: size)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
