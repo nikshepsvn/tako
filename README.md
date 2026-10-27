@@ -32,7 +32,7 @@
   <img src="docs/images/workspace.png" alt="Tako: three agents in a grid. One waits on an approval with Allow and Deny on its card and a Sumi tag, since its prompts are handed to Sumi; one has finished and is ready for review; a dev server is listed in the sidebar, and the inspector is open" width="100%">
 </p>
 
-> **蛸 (tako)**: *octopus*. Eight arms, many agents, one calm head. (Formerly Kuronami.)
+> **蛸 (tako)**: *octopus*. Eight arms, many agents, one calm head. (Formerly Kuronami, then Hyperterm.)
 
 ---
 
@@ -197,7 +197,7 @@ You also need [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and/
 1. **⇧⌘C** opens Claude in the selected folder, **⇧⌘X** opens Codex. Or type a task into *Ask a new agent…* in the sidebar and press Return: the agent gets a name and its own worktree.
 2. When a card turns amber, it **needs you**. Press **Allow**, or **⌘J** to jump there.
 3. When it says ***Review +n −m***, press **⌥⌘R** to read the diff, comment, commit or merge.
-4. Add `~/.hyperterm/bin` to your `PATH` (Tako menu ▸ *Use ht in Your Shell…*) and drive it all from any terminal:
+4. Add `~/.tako/bin` to your `PATH` (Tako menu ▸ *Use ht in Your Shell…*) and drive it all from any terminal:
 
 ```sh
 ht new claude --worktree --task "fix the flaky auth test"
@@ -231,15 +231,15 @@ ht ls
 - **Reopen closed agents.** Closed agents with a conversation stay under *Recently closed* in the sidebar (and in ⌘P), one click from resuming.
 
 #### Sumi
-One agent behind the round Tako mark in the window's bottom-left corner. Click it, or press ⌃⌘O, and its terminal opens in a panel floating over the window; it stays open while it works. It runs on Claude Code (Codex if that's the only one you have) with the CLI's own default model; switch the model in its header, and the CLI there or in Settings. It runs in its own folder (`~/.hyperterm/organizer`) with full access, because its work spans every project, and reaches each project by absolute path. Its own Tako tools run without a prompt, and the app still checks each call.
+One agent behind the round Tako mark in the window's bottom-left corner. Click it, or press ⌃⌘O, and its terminal opens in a panel floating over the window; it stays open while it works. It runs on Claude Code (Codex if that's the only one you have) with the CLI's own default model; switch the model in its header, and the CLI there or in Settings. It runs in its own folder (`~/.tako/organizer`) with full access, because its work spans every project, and reaches each project by absolute path. Its own Tako tools run without a prompt, and the app still checks each call.
 - **Start agents anywhere.** `start_agent` starts Claude or Codex in any folder, each in its own worktree, up to five on the same task at once. What it starts shows on screen together: one fills the view, two or three sit side by side, more go in rows of three.
 - **Arrange the window.** Focus, split or grid, or an exact shape (*"@api big on the left, @web over @fix on the right"*). Save an arrangement by name and bring it back later (*"show me the review layout"*), or pop terminals into their own windows to put one on another screen.
 - **See the desk.** `standup` reports every terminal in one compact call: state and for how long, current action, todo progress, diff against its base and uncommitted files (read fresh from git), the last test run, cost and context, the last turn's summary, blockers (waiting on you, failed, idle with uncommitted work), files it shares with another agent, the plan, steward warnings and account limits.
 - **Chain work.** `watch_terminal` leaves a note on an agent (`repeat` for every turn); when it finishes (or fails, or exits), Tako messages Sumi with the agent's summary, its diffstat and any failing tests, and your note, and Sumi acts on it. Agents Sumi follows also report a server crash or a wait on you that runs past 5 minutes. Steward warnings repeat only when they get a gigabyte worse or after half an hour. Events that land together arrive as one message, so it wakes once.
-- **Run a plan.** `plan` keeps a task board across restarts (`~/.hyperterm/organizer-plan.json`): tasks with an owner or a folder, dependencies and a brief. When a task's dependencies are done, Tako sends the brief to its owner or starts an agent for it; when the owner finishes the turn the task ran in, the task is done and the next ones start. Sumi hears each step.
+- **Run a plan.** `plan` keeps a task board across restarts (`~/.tako/organizer-plan.json`): tasks with an owner or a folder, dependencies and a brief. When a task's dependencies are done, Tako sends the brief to its owner or starts an agent for it; when the owner finishes the turn the task ran in, the task is done and the next ones start. Sumi hears each step.
 - **Handle waits you hand it, only when you ask.** *"Handle @api's questions until it's done"*, *"answer @web's next 3 prompts"*, or *"watch @db for an hour"*, with a note like *"prefer pnpm"*. While it lasts, the card shows a **Sumi** tag and that agent's questions and permission prompts go to Sumi instead of you. It answers questions with a message or by picking an option, and permission prompts with approve or deny, never *Always*. Recursive deletes and chmods, piping a download into a shell, `sudo`, `git push`, `reset --hard` and `git clean`, deploys, publishing a package, dropping tables, anything touching secrets or credentials, force-kills, writes outside the agent's workspace, folder trust (unless you say yes) and sign-in are left for you. If it doesn't answer within 90 s, you're notified as usual. Every answer it gives is noted in the agent's timeline.
 - **Resume past work.** `session_history` lists closed sessions with what they did and how they ended; `reopen_session` resumes their own conversations, several at once in a grid. It can also resume a Claude or Codex conversation Tako never ran, by its session id.
-- **Remember.** `remember` and `recall` keep bounded, structured memory (`~/.hyperterm/organizer-memory.json`): per project its stack, test, build and run commands and conventions, your preferences, and lessons. `start_agent`'s reply carries what it knows about the project and the commands Tako detects there, so the brief it writes can use them. Open threads and handoffs go in `~/.hyperterm/organizer-notes.md`. When its context is more than 60% full it starts a fresh conversation and picks up with standup, plan and recall. Switching between Claude and Codex keeps all of it.
+- **Remember.** `remember` and `recall` keep bounded, structured memory (`~/.tako/organizer-memory.json`): per project its stack, test, build and run commands and conventions, your preferences, and lessons. `start_agent`'s reply carries what it knows about the project and the commands Tako detects there, so the brief it writes can use them. Open threads and handoffs go in `~/.tako/organizer-notes.md`. When its context is more than 60% full it starts a fresh conversation and picks up with standup, plan and recall. Switching between Claude and Codex keeps all of it.
 - **Learn your answers.** Your own approve, *Always* and deny answers are remembered per project (the repository, so every worktree shares them). A wait handed to Sumi shows your past answers, and a request you chose *Always* for in that project is answered the same way without waking Sumi, even in a new worktree where Claude would ask again. A shell command is matched on its exact arguments (approving `npm run test` never covers `npm run deploy`), and commands that can hide what they run (env prefixes, paths, pipes and chaining, interpreters and wrappers like `bash`, `python`, `npx`, `sudo`) are never learned, nor are risky requests.
 - **Step in.** It can stop an agent's turn the way Esc does, then tell it what to do instead.
 - **Ask about the machine.** *"Why is my Mac slow?"* `machine_status` shows what the steward sees. It changes the steward's policy (*"no more than 4 agents at once"*, *"keep @api at full speed"*) only when you ask.
@@ -295,8 +295,8 @@ Servers start on the agent's own `$PORT` and show under *Servers and shells* in 
 
 #### Isolated workspaces
 - **Quick dispatch.** Type a task in the sidebar's *Ask a new agent…* field and press Return. A new agent starts on it, auto-named from the task, in its own git worktree.
-- **Claude's native worktrees** (`claude --worktree`) for Claude sessions: Claude blocks writes back into the main checkout and copies `.worktreeinclude` files (like `.env`). Codex gets a worktree under `~/.hyperterm/worktrees` with the same files copied in.
-- **Per-project dev setup.** Add `.hyperterm.json` to a repo:
+- **Claude's native worktrees** (`claude --worktree`) for Claude sessions: Claude blocks writes back into the main checkout and copies `.worktreeinclude` files (like `.env`). Codex gets a worktree under `~/.tako/worktrees` with the same files copied in.
+- **Per-project dev setup.** Add `.tako.json` to a repo (`.hyperterm.json` is still read when there's none):
   ```json
   { "setup": "pnpm i", "dev": "pnpm dev --port $PORT", "ports": [4100, 4199] }
   ```
@@ -307,13 +307,13 @@ Servers start on the agent's own `$PORT` and show under *Servers and shells* in 
 - **Real Chromium inside Tako.** Browsers are sessions like terminals: labeled (`@api-web`), in the sidebar under their agent, tiled in split and grid, and restored where they left off. ⇧⌘B opens one, on the selected terminal's dev server when it has one.
 - **Every agent gets its own.** An agent's first browser action opens `@<agent>-web` next to it, and its tools act on that browser by default, so parallel agents never fight over a page. `list_pages` names every Tako browser by label, and an agent can use another one by passing its page id. `new_page` opens an extra tab: another browser the agent owns, shown under it in the sidebar and made its default page. `close_page` closes only tabs the agent opened, never its first browser or another agent's.
 - **Watch and step in.** The tile shows who is driving (`@api · click`), and you can click, type, and log in yourself at any time.
-- **Your logins, if you want them.** *Import Chrome Logins…* (in a browser's ⋯ menu) copies your Chrome cookies into Tako's browser profile, which is kept separate from your own Chrome (`~/.hyperterm/browser`).
+- **Your logins, if you want them.** *Import Chrome Logins…* (in a browser's ⋯ menu) copies your Chrome cookies into Tako's browser profile, which is kept separate from your own Chrome (`~/.tako/browser`).
 - **Scoped by default.** Agents started in Tako use Tako's browsers, not your everyday Chrome. App menu → *Let Agents Use My Chrome* re-enables Claude in Chrome for them.
 
 Agents drive the browsers through [`chrome-devtools-mcp`](https://github.com/ChromeDevTools/chrome-devtools-mcp) (Node.js required), attached to Chromium's DevTools port on 127.0.0.1. Read-only tools (snapshots, screenshots, console, network) run without asking; navigating, clicking, typing, and scripts ask first.
 
 #### Agents that talk to each other
-Every agent started in Tako gets a `hyperterm` MCP server (it keeps its original name so saved permissions keep working):
+Every agent started in Tako gets a `tako` MCP server (tools `mcp__tako__*`; answers Tako learned for the old `mcp__hyperterm__*` names carry over):
 
 | Tool | What it does |
 |---|---|
@@ -338,7 +338,7 @@ Claude sessions are launched as `claude --name <label>`, so Claude's built-in cr
 The sidebar shows your 5-hour and weekly usage with reset times: Claude's from its statusLine (your own statusline still prints unchanged), Codex's from the session log Codex writes after every turn. Each card shows cost and the inspector shows context use. When an agent hits a rate limit, its card says when the limit resets, not just "failed", and offers to continue then or on another account.
 
 #### Several Claude and Codex accounts
-**Settings ▸ Accounts** (⌘,) adds more Claude Code or Codex sign-ins. Each extra account runs from its own folder (`CLAUDE_CONFIG_DIR` / `CODEX_HOME` under `~/.hyperterm/accounts`), the way both CLIs separate accounts themselves. It gets its own login and history, and starts with your settings, skills, and instructions. Pick which account new agents use, or choose one per agent in New Session or with `ht new claude --account work`. Agents an agent starts inherit its account. Each account shows its own usage, so you can see which one has room. When an agent hits a limit, right-click it and choose **Move to Account**: its conversation is copied over and it resumes there. Your default account (`~/.claude`, `~/.codex`) is never touched.
+**Settings ▸ Accounts** (⌘,) adds more Claude Code or Codex sign-ins. Each extra account runs from its own folder (`CLAUDE_CONFIG_DIR` / `CODEX_HOME` under `~/.tako/accounts`), the way both CLIs separate accounts themselves. It gets its own login and history, and starts with your settings, skills, and instructions. Pick which account new agents use, or choose one per agent in New Session or with `ht new claude --account work`. Agents an agent starts inherit its account. Each account shows its own usage, so you can see which one has room. When an agent hits a limit, right-click it and choose **Move to Account**: its conversation is copied over and it resumes there. Your default account (`~/.claude`, `~/.codex`) is never touched.
 
 </details>
 
@@ -347,7 +347,7 @@ The sidebar shows your 5-hour and weekly usage with reset times: Claude's from i
 
 ### Security model
 
-Tako types into terminals on your behalf, so who may ask for what matters. The control socket (`~/.hyperterm/control.sock`, user-only) identifies every caller from **kernel facts** (peer PID, process ancestry, and macOS's *responsible process*), never from anything the caller claims:
+Tako types into terminals on your behalf, so who may ask for what matters. The control socket (`~/.tako/control.sock`, user-only) identifies every caller from **kernel facts** (peer PID, process ancestry, and macOS's *responsible process*), never from anything the caller claims:
 
 - **You:** processes outside Tako, or inside your own shell/server terminals.
 - **Agents:** anything traced to an agent terminal. Agents can message other agents, read agents and servers (not shell scrollback), restart servers, start servers with your OK, set their own status, and rename only themselves (never over a name you chose).
@@ -355,17 +355,17 @@ Tako types into terminals on your behalf, so who may ask for what matters. The c
 
 Only you can press keys, answer prompts, type raw text, open shells, or close terminals. That stops one agent from approving another's permission prompt or running commands outside its own checks. Session IDs and tasks typed into shells are validated and shell-quoted, peer messages are stripped of control and escape sequences, and git runs with repo hooks and fsmonitor disabled.
 
-**Browsers.** Agents drive Chromium over its DevTools protocol on `127.0.0.1` only. Scoping each agent to its own browser is a default and a guardrail, not isolation: `chrome-devtools-mcp` sees every Tako browser, and while Chromium runs, any process on your Mac can connect to that port. Every Tako browser shares one profile (`~/.hyperterm/browser`), so a login in one is a login in all, including logins imported from Chrome. Only sign in where you're happy for your agents to act.
+**Browsers.** Agents drive Chromium over its DevTools protocol on `127.0.0.1` only. Scoping each agent to its own browser is a default and a guardrail, not isolation: `chrome-devtools-mcp` sees every Tako browser, and while Chromium runs, any process on your Mac can connect to that port. Every Tako browser shares one profile (`~/.tako/browser`), so a login in one is a login in all, including logins imported from Chrome. Only sign in where you're happy for your agents to act.
 
 **Limit:** this is a boundary between agents and Tako, not an OS sandbox. An agent you allow to drive other apps (for example via `osascript`) could act outside it. Claude's sandbox mode closes that gap.
 
 ### Nothing global is modified
 
-Hooks, the statusLine, the MCP server and permissions are attached **per launch** through wrappers in `~/.hyperterm/bin` (`claude --settings … --mcp-config …`, `codex -c …`). They merge with your settings; your existing hooks keep running. `~/.claude/settings.json` and `~/.codex/config.toml` are never written. Claude agents also get `--no-chrome` per launch, so they use Tako's browsers rather than your Chrome (App menu → *Let Agents Use My Chrome* drops it). Your Chrome profile is only read when you choose *Import Chrome Logins…*. One opt-in menu item writes config, and asks first: channels (`claude mcp add --scope user hyperterm`). Each Codex agent gets its own private app-server, so its hooks and MCP servers stay with that agent; if that server doesn't start, Codex runs with `--no-daemon` instead.
+Hooks, the statusLine, the MCP server and permissions are attached **per launch** through wrappers in `~/.tako/bin` (`claude --settings … --mcp-config …`, `codex -c …`). They merge with your settings; your existing hooks keep running. `~/.claude/settings.json` and `~/.codex/config.toml` are never written. Claude agents also get `--no-chrome` per launch, so they use Tako's browsers rather than your Chrome (App menu → *Let Agents Use My Chrome* drops it). Your Chrome profile is only read when you choose *Import Chrome Logins…*. One opt-in menu item writes config, and asks first: channels (`claude mcp add --scope user tako`). Each Codex agent gets its own private app-server, so its hooks and MCP servers stay with that agent; if that server doesn't start, Codex runs with `--no-daemon` instead.
 
 ### `ht` CLI
 
-Add `export PATH="$HOME/.hyperterm/bin:$PATH"` to `~/.zshrc` (App menu → *Use ht in Your Shell…*).
+Add `export PATH="$HOME/.tako/bin:$PATH"` to `~/.zshrc` (App menu → *Use ht in Your Shell…*).
 
 ```sh
 ht ls                                           # label · kind · state · ports · summary
@@ -412,7 +412,7 @@ ht layout grid   ·   ht focus @ui   ·   ht restart @web   ·   ht rename @api 
 | Process tree + libproc sockets | Ports, foreground command, an agent quitting back to its shell, server crashes |
 | Browser tool calls (through `ht browser-mcp`) | Which agent is driving which browser, shown on its tile and sidebar row |
 
-Hook events are stamped and ordered, so a slow hook can't roll state back. The state machine (`Sources/Hyperterm/Status/StatusReducer.swift`) is a pure function with unit tests.
+Hook events are stamped and ordered, so a slow hook can't roll state back. The state machine (`Sources/Tako/Status/StatusReducer.swift`) is a pure function with unit tests.
 
 ### Build
 
@@ -422,32 +422,32 @@ Requires macOS 15+, Xcode 16+, XcodeGen and Zig 0.15.2 (`brew install xcodegen z
 scripts/build-ghosttykit.sh   # once: builds libghostty (Ghostty v1.3.1, ReleaseFast) → GhosttyKit.xcframework
 scripts/run.sh                # build + launch the debug app (first build downloads Chromium, ~130 MB)
 scripts/install.sh            # optimized build → /Applications/Tako.app
-xcodebuild -project Hyperterm.xcodeproj -scheme Hyperterm -derivedDataPath build/DerivedData test
+xcodebuild -project Tako.xcodeproj -scheme Tako -derivedDataPath build/DerivedData test
 scripts/linux-check.sh        # anywhere with Swift + Git: parse every file, design lint, pure-logic tests
 ```
 
-The interface is built on one design system, `Sources/Hyperterm/UI/Design.swift`: six text styles, a 4-point spacing grid, three corner radii, sumi-ink neutrals with color from traditional pigments, reserved for meaning, and one motion curve that turns off with Reduce Motion. `scripts/lint-design.sh` fails on raw font sizes, radii or colors anywhere else.
+The interface is built on one design system, `Sources/Tako/UI/Design.swift`: six text styles, a 4-point spacing grid, three corner radii, sumi-ink neutrals with color from traditional pigments, reserved for meaning, and one motion curve that turns off with Reduce Motion. `scripts/lint-design.sh` fails on raw font sizes, radii or colors anywhere else.
 
-Tako was called Hyperterm until October 2026. Internal names keep the old spelling so existing setups carry over: the Xcode project and Swift module, the bundle id, `~/.hyperterm`, the `ht` CLI, and `HT_*` environment variables.
+Tako was called Hyperterm until October 2026. An existing install migrates automatically on first launch: `~/.hyperterm` moves to `~/.tako` and stays behind as a symlink to it (so PATH lines, worktrees and saved paths keep working), the CEF cache moves to `~/Library/Caches/Tako`, and Claude channels are re-registered as `tako`. The bundle id (`dev.hyperterm.app`) keeps the old spelling so your preferences and permissions carry over, as do the `ht` CLI (also linked as `tako`) and the `HT_*` environment variables.
 
-Chromium comes from [CefSwift](https://github.com/Rajaniraiyn/CefSwift) (MIT, pinned in `project.yml`). `scripts/embed-cef.sh` runs after each build: it caches the CEF distribution in `~/Library/Caches/Hyperterm/cef` and assembles the framework plus the five helper apps Chromium needs. Agents' browser tools need Node.js (`npx chrome-devtools-mcp`).
+Chromium comes from [CefSwift](https://github.com/Rajaniraiyn/CefSwift) (MIT, pinned in `project.yml`). `scripts/embed-cef.sh` runs after each build: it caches the CEF distribution in `~/Library/Caches/Tako/cef` and assembles the framework plus the five helper apps Chromium needs. Agents' browser tools need Node.js (`npx chrome-devtools-mcp`).
 
 ### Project layout
 
 ```
-Sources/Hyperterm/Ghostty   libghostty bridge: runtime callbacks, action router, surface view (input/IME/mouse)
-Sources/Hyperterm/Model     LaunchSpec, TerminalSession, SessionSurface, SessionStore (+Hooks, +Approvals, +Browser)
-Sources/Hyperterm/Status    StatusReducer, ProcessInspector (identity, ports), Git, Review, Checkpoints, CommitWriter,
-                            AgentOptions, ProjectActions, Editors, Workspaces, notifications
-Sources/Hyperterm/IPC       control socket server and request handler (permissions)
-Sources/Hyperterm/Launch    agent wrappers, per-launch hooks/statusLine/MCP config
-Sources/Hyperterm/Steward   resource sampling, background priority, launch admission, heavy-job slots, sleep, warnings
-Sources/Hyperterm/Browser   Chromium runtime (lazy start, DevTools port), browser surface and bar, Chrome logins import
-Sources/Hyperterm/UI        Design (tokens + components), LayoutTree, sidebar, sumi, tiles, inspector, switcher, sheets
-Sources/HypertermHelper     Chromium helper process (renderer, GPU, utility)
-Sources/ht                  CLI, hook/permission/statusline entry points, stdio MCP server, browser MCP proxy
-Tests/HypertermTests        state machine, layout tree, checkpoints (real Git), agent options, project actions, naming,
-                            safety, diff parsing, recap
+Sources/Tako/Ghostty  libghostty bridge: runtime callbacks, action router, surface view (input/IME/mouse)
+Sources/Tako/Model    LaunchSpec, TerminalSession, SessionSurface, SessionStore (+Hooks, +Approvals, +Browser)
+Sources/Tako/Status   StatusReducer, ProcessInspector (identity, ports), Git, Review, Checkpoints, CommitWriter,
+                      AgentOptions, ProjectActions, Editors, Workspaces, notifications
+Sources/Tako/IPC      control socket server and request handler (permissions)
+Sources/Tako/Launch   agent wrappers, per-launch hooks/statusLine/MCP config
+Sources/Tako/Steward  resource sampling, background priority, launch admission, heavy-job slots, sleep, warnings
+Sources/Tako/Browser  Chromium runtime (lazy start, DevTools port), browser surface and bar, Chrome logins import
+Sources/Tako/UI       Design (tokens + components), LayoutTree, sidebar, sumi, tiles, inspector, switcher, sheets
+Sources/TakoHelper    Chromium helper process (renderer, GPU, utility)
+Sources/ht            CLI, hook/permission/statusline entry points, stdio MCP server, browser MCP proxy
+Tests/TakoTests       state machine, layout tree, checkpoints (real Git), agent options, project actions, naming,
+                      safety, diff parsing, recap
 ```
 
 ### Status
