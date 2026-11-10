@@ -102,7 +102,11 @@ final class TerminalSession: ObservableObject, Identifiable {
     var turnIsMessage = false
     /// The agent's whole closing message for its last turn (Stop's last_assistant_message);
     /// `summary` holds only its first line. Cleared when a turn starts.
-    var lastReply: String?
+    var lastReply: String? { didSet { if lastReply != nil { replyCount += 1 } } }
+    /// How many closing messages this agent has reported. An agent can go from working to idle
+    /// again without a new one (a background task ending, a restart on the same conversation),
+    /// and Sumi shouldn't hear the old one twice.
+    private(set) var replyCount = 0
     /// The current turn began with the user's own prompt: not another agent's message, not a
     /// Tako event digest, not a channel event. Sumi's `user_requested` counts only in such a turn.
     var turnFromUser = true

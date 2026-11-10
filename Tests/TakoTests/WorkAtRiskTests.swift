@@ -135,12 +135,58 @@ final class WorkAtRiskTests: XCTestCase {
         XCTAssertEqual(risk?.isEmpty, false)
     }
 
+    /// Claude Code starts a worktree from the remote's default branch, fetched without moving
+    /// any local ref. Those commits were never this agent's work.
+    func testCommitsTheWorktreeStartedWithAreNotAtRisk() {
+        let (ahead, fresh) = worktreeStartedAheadOfEveryLocalRef()
+        XCTAssertEqual(WorkAtRisk.evaluate(at: fresh, base: "main"), WorkAtRisk(uncommitted: 0, unmerged: 0), "\(ahead) fetched commits")
+
+        write(fresh, "mine.txt", "mine\n")
+        git(fresh, "add", "-A")
+        commit(fresh, "the agent's own")
+        XCTAssertEqual(WorkAtRisk.evaluate(at: fresh, base: "main")?.unmerged, 1)
+    }
+
+    func testWorkIsMeasuredFromWhereTheWorktreeStartedWhenTheRecordedBaseIsStale() {
+        let (_, fresh) = worktreeStartedAheadOfEveryLocalRef()
+        // The main checkout sat on an old branch when the agent started.
+        git(root, "branch", "feat/old", "main")
+        write(fresh, "mine.txt", "one\ntwo\n")
+
+        XCTAssertEqual(Review.diffStat(at: fresh, base: "feat/old"), DiffStat(added: 2, removed: 0, files: 1))
+        XCTAssertEqual(Review.baseCommit(at: fresh, base: "feat/old"), Review.worktreeStart(at: fresh))
+    }
+
+    func testABranchStartedFromItsBaseIsStillMeasuredFromTheMergeBase() {
+        commitInTree("b.txt")
+        write(root, "main.txt", "moved on\n")
+        git(root, "add", "-A")
+        commit(root, "main moves on")
+        XCTAssertEqual(Review.diffStat(at: tree, base: "main"), DiffStat(added: 1, removed: 0, files: 1))
+    }
+
     // MARK: - helpers
 
     private func commitInTree(_ name: String) {
         write(tree, name, name + "\n")
         git(tree, "add", "-A")
         commit(tree, "add \(name)")
+    }
+
+    /// A worktree made at commits that were fetched but are in no local ref: three commits
+    /// from another clone, with `main` left where it was.
+    private func worktreeStartedAheadOfEveryLocalRef() -> (ahead: Int, path: String) {
+        let base = (root as NSString).deletingLastPathComponent
+        let other = base + "/other", fresh = base + "/fresh"
+        git(base, "clone", "-q", root, other)
+        for name in ["x.txt", "y.txt", "z.txt"] {
+            write(other, name, name + "\n")
+            git(other, "add", "-A")
+            commit(other, "upstream \(name)")
+        }
+        git(root, "fetch", "-q", other, "main")
+        git(root, "worktree", "add", "-b", "worktree-fresh", fresh, "FETCH_HEAD")
+        return (3, fresh)
     }
 
     /// A bare origin holding main, with origin/HEAD pointing at it.

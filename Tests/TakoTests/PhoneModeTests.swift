@@ -116,6 +116,70 @@ final class PhoneModeTests: XCTestCase {
         XCTAssertTrue(api.hasHookApproval)
     }
 
+    func testAnAgentGoingIdleAgainWithNoNewReplyIsNotToldTwice() {
+        let (store, api, _) = fixture()
+        store.setPhoneMode(true)
+        api.turnFromUser = false
+        api.lastReply = "The search is finished: 2C is the best version."
+        // Each report lands in its own digest, as they do minutes apart.
+        func told() -> [String] {
+            store.reportToSumi(api, from: .working)
+            defer { store.sumiDigest = SumiDigest() }
+            return finishes(store)
+        }
+
+        XCTAssertEqual(told(), ["@api finished: The search is finished: 2C is the best version."])
+        XCTAssertEqual(told(), [], "a background task ended, or it was restarted on the same conversation")
+        api.lastReply = "The search is finished: 2C is the best version."
+        XCTAssertEqual(told(), [], "a turn nobody typed (a task notification) ended on the very same words")
+
+        api.lastReply = "No setup we've tested reaches the bar."
+        XCTAssertEqual(told(), ["@api finished: No setup we've tested reaches the bar."], "a new reply is news")
+    }
+
+    func testTheSameWordsAnsweringTheUsersOwnPromptAreStillTold() {
+        let (store, api, _) = fixture()
+        store.setPhoneMode(true)
+        api.turnFromUser = true
+        api.lastReply = "Done."
+        store.reportToSumi(api, from: .working)
+        api.lastReply = "Done."
+        store.reportToSumi(api, from: .working)
+
+        XCTAssertEqual(store.sumiHeard[api.id]?.count, api.replyCount, "the second Done. was heard as its own reply")
+    }
+
+    func testAReplyToThePromptTheUserTypedThemselvesSaysSo() {
+        let (store, api, _) = fixture()
+        store.setPhoneMode(true)
+        api.turnFromUser = true
+        api.lastReply = "Keep the vitamin C."
+        store.reportToSumi(api, from: .working)
+        XCTAssertTrue(finishes(store).first?.contains("the user typed to it themselves") == true, "\(finishes(store))")
+
+        // One Sumi asked for (a watch, a message it sent) is Sumi's to act on in full.
+        api.turnFromUser = true
+        api.lastReply = "Swapped it."
+        store.sumiWatches[api.id] = "tell the user the total"
+        store.reportToSumi(api, from: .working)
+        XCTAssertEqual(finishes(store).last, "@api finished: Swapped it. (your note: tell the user the total)")
+    }
+
+    func testAWatchedAgentEndingATurnWithNoNewReplyIsToldBriefly() {
+        let (store, api, _) = fixture()
+        api.turnFromUser = false
+        api.lastReply = "Tests pass."
+        store.sumiBrain.repeatWatches[api.id] = ""
+        store.sumiWatches[api.id] = ""
+        store.reportToSumi(api, from: .working)
+        store.reportToSumi(api, from: .working)
+
+        XCTAssertEqual(finishes(store), [
+            "@api finished: Tests pass.",
+            "@api finished: its turn ended with no new reply: the closing message is the one you already have",
+        ])
+    }
+
     func testPopoverCopyAndRules() {
         let since = Date(timeIntervalSince1970: 0)
         let text = PhoneModePopover.detail(since: since)
@@ -145,6 +209,11 @@ final class PhoneModeTests: XCTestCase {
         let session = TerminalSession(spec: spec, resume: false)
         session.apply(.processStarted, source: "test", force: .idle)
         return session
+    }
+
+    /// The finished lines waiting in Sumi's digest.
+    private func finishes(_ store: SessionStore) -> [String] {
+        store.sumiDigest.events.filter { if case .finished = $0.kind { return true } else { return false } }.map(\.line)
     }
 
     private func request(_ command: String) -> String {
