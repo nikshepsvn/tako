@@ -30,6 +30,8 @@ final class SessionStore: ObservableObject {
     var onReattach: ((TerminalSession) -> Void)?
     /// Terminals Sumi waits on, each with the note it left for when that one finishes.
     var sumiWatches: [UUID: String] = [:]
+    /// The closing message Sumi last heard from each agent, so the same one isn't told twice.
+    var sumiHeard: [UUID: (reply: String, count: Int)] = [:]
     var sumiDigest = SumiDigest()
     /// Folder trust for Sumi's agents, asked once per folder (SessionStore+Startup).
     let startupGate = StartupGate()
@@ -444,6 +446,7 @@ final class SessionStore: ObservableObject {
         }
         // Its events stop with the process, so a watch or handoff ends here, told to Sumi.
         let sumiHears = sumi.map { $0.id != session.id && !$0.isExitedProcess } ?? false
+        sumiHeard[session.id] = nil
         if sumiWatches.removeValue(forKey: session.id) != nil, sumiHears {
             addToSumiDigest(SumiEvent(label: session.label, kind: .exited))
         }

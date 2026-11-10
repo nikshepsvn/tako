@@ -411,15 +411,28 @@ extension SessionStore {
     /// uses up the watch; other kinds of event go here.
     private func sumiEvent(_ session: TerminalSession, from previous: AgentState) -> SumiEvent? {
         // In Phone Mode Sumi hears how every agent ends a turn, so it can tell the user.
+        let watched = sumiWatches[session.id] != nil
         guard let note = sumiWatches[session.id] ?? (isPhoneModeOn && session.kind.isAgent ? "" : nil) else { return nil }
         let kind: SumiEvent.Kind
+        var answersUser = false
         switch session.state {
         // Background subagents outlive the turn; their last SubagentStop reports it instead.
         case .idle where previous == .working && session.runningSubagents.isEmpty:
+            let facts = finishFacts(session).map { " [\($0)]" } ?? ""
+            if heardThisReply(session) {
+                // Nobody asked for this one, so there is nothing to pass on.
+                guard watched else { return nil }
+                kind = .finished("its turn ended with no new reply: the closing message is the one you already have" + facts)
+                break
+            }
+            if let reply = session.lastReply { sumiHeard[session.id] = (reply, session.replyCount) }
             // The whole closing message (bounded), so Sumi needn't read_terminal for the rest.
             let summary = session.lastReply.flatMap { FinalReply.excerpt($0) } ?? Self.turnSummary(session)
                 ?? "turn complete (read_terminal for its reply)"
-            kind = .finished(summary + (finishFacts(session).map { " [\($0)]" } ?? ""))
+            kind = .finished(summary + facts)
+            // In Phone Mode Sumi hears every finish, including replies to prompts the user typed
+            // to the agent themselves. They read those where they asked.
+            answersUser = !watched && session.turnFromUser && session.lastReply != nil
         case .failed(let reason): kind = .failed(reason)
         case .exited: kind = .exited
         default: return nil
@@ -427,7 +440,17 @@ extension SessionStore {
         // A repeating watch re-arms until the terminal closes or exits.
         if case .exited = kind { sumiBrain.repeatWatches[session.id] = nil }
         sumiWatches[session.id] = sumiBrain.repeatWatches[session.id]
-        return SumiEvent(label: session.label, kind: kind, note: note.isEmpty ? nil : note)
+        return SumiEvent(label: session.label, kind: kind, note: note.isEmpty ? nil : note, answersUser: answersUser)
+    }
+
+    /// Whether Sumi already has this agent's closing message. Either no reply came since the one
+    /// it heard (the agent went from working to idle again: a background task ended, or it was
+    /// restarted on the same conversation), or a turn nobody typed (a task notification, a
+    /// channel event) ended on the very same text. A turn the user typed is always news, even
+    /// when its reply reads the same ("Done.").
+    private func heardThisReply(_ session: TerminalSession) -> Bool {
+        guard let reply = session.lastReply, let heard = sumiHeard[session.id] else { return false }
+        return heard.count == session.replyCount || (heard.reply == reply && !session.turnFromUser)
     }
 
     /// Sends the digest once its window has passed and Sumi isn't mid-turn; the
@@ -507,6 +530,9 @@ struct SumiEvent: Equatable {
     var kind: Kind
     /// The note watch_terminal left for this terminal.
     var note: String?
+    /// A finished turn the user started by typing to that agent themselves, heard only because
+    /// Phone Mode is on.
+    var answersUser = false
 
     /// The same event with a finished reply cut to `limit` characters.
     func trimmed(to limit: Int) -> SumiEvent {
@@ -545,7 +571,9 @@ struct SumiEvent: Equatable {
                 + ". They were notified; remind them, or unblock what depends on it"
         case .autoApproved(let key):
             line += "asked for \(key): approved, as the user always does in this project"
-        case .finished(let summary): line += "finished: " + summary
+        case .finished(let summary):
+            line += "finished: " + summary
+            if answersUser { line += " (it was answering a prompt the user typed to it themselves, so they have this reply: pass on only what still needs them)" }
         case .failed(let reason): line += "failed: " + reason
         case .exited: line += "exited"
         case .steward(let warning): line += "steward warning: " + warning
