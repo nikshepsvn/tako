@@ -12,9 +12,55 @@ enum Review {
 
     /// The commit the agent's work is measured against: the merge-base with its base branch for
     /// worktrees, otherwise HEAD (uncommitted changes only).
+    ///
+    /// The recorded base is only the branch the main checkout had out when the agent started.
+    /// Claude Code starts its worktrees from the remote's default branch whatever that was, so
+    /// with the main checkout on an old feature branch every agent's diff counted the thousands
+    /// of commits between that branch and main as its own. When the worktree didn't start on
+    /// the recorded base, the nearest point it could have left from is used instead: where the
+    /// worktree or its branch started, or the merge-base with a default branch.
     static func baseCommit(at path: String, base: String?) -> String? {
-        if let base, base != "HEAD", let mergeBase = runGit(["-C", path, "merge-base", "HEAD", base]), !mergeBase.isEmpty { return mergeBase }
-        return runGit(["-C", path, "rev-parse", "HEAD"])
+        guard let base, base != "HEAD" else { return runGit(["-C", path, "rev-parse", "HEAD"]) }
+        let recorded = mergeBase(at: path, with: base)
+        let start = worktreeStart(at: path)
+        // The usual case, and the only one that costs nothing extra: it started on its base.
+        if let recorded, start == nil || start == recorded { return recorded }
+        let others = ([start, branchStart(at: path)].compactMap { $0 } + WorkAtRisk.defaultRefs(at: path))
+            .compactMap { mergeBase(at: path, with: $0) }
+        var nearest: (commit: String, ahead: Int)?
+        for commit in ([recorded].compactMap { $0 } + others) where commit != nearest?.commit {
+            guard let ahead = runGit(["-C", path, "rev-list", "--count", "\(commit)..HEAD"]).flatMap({ Int($0) }) else { continue }
+            if ahead < nearest?.ahead ?? .max { nearest = (commit, ahead) }
+        }
+        return nearest?.commit ?? runGit(["-C", path, "rev-parse", "HEAD"])
+    }
+
+    private static func mergeBase(at path: String, with ref: String) -> String? {
+        runGit(["-C", path, "merge-base", "HEAD", ref]).flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    /// The commit this worktree was created at, from the first line of its own HEAD log. Only a
+    /// line that creates HEAD (its old value is all zeros) counts: git drops entries after 90
+    /// days, and whatever is oldest then is just a point partway through the work.
+    static func worktreeStart(at path: String) -> String? {
+        guard let file = runGit(["-C", path, "rev-parse", "--path-format=absolute", "--git-path", "logs/HEAD"]), !file.isEmpty,
+              let handle = FileHandle(forReadingAtPath: file) else { return nil }
+        defer { try? handle.close() }
+        // Two hashes and a space each: 130 bytes covers SHA-256 repositories too.
+        let fields = String(decoding: handle.readData(ofLength: 130), as: UTF8.self).split(separator: " ", maxSplits: 2)
+        guard fields.count == 3, !fields[0].isEmpty, fields[0].allSatisfy({ $0 == "0" }), fields[1].count >= 40 else { return nil }
+        return String(fields[1])
+    }
+
+    /// Where the checked-out branch was created, when it was made from another ref ("Created
+    /// from origin/main"): an agent that starts a fresh branch from the remote has left from
+    /// there. One made from HEAD only renames the work so far, which still counts.
+    private static func branchStart(at path: String) -> String? {
+        guard let branch = runGit(["-C", path, "symbolic-ref", "-q", "HEAD"]), !branch.isEmpty,
+              let first = runGit(["-C", path, "log", "-g", "--format=%H%x09%gs", branch])?.split(separator: "\n").last else { return nil }
+        let parts = first.split(separator: "\t", maxSplits: 1)
+        guard parts.count == 2, parts[1].hasPrefix("branch: Created from "), parts[1] != "branch: Created from HEAD" else { return nil }
+        return String(parts[0])
     }
 
     static func diffStat(at path: String, base: String?) -> DiffStat? {

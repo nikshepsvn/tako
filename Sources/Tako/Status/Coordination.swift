@@ -281,7 +281,7 @@ enum AgentChanges {
 
     /// Commits on the branch that its base doesn't have, newest first (at most 30).
     private static func commitList(at path: String, base: String) -> [String]? {
-        guard base != "HEAD", let mergeBase = runGit(["-C", path, "merge-base", "HEAD", base]) else { return nil }
+        guard base != "HEAD", let mergeBase = Review.baseCommit(at: path, base: base) else { return nil }
         let log = runGit(["-C", path, "log", "--oneline", "--no-decorate", "-n", "30", "\(mergeBase)..HEAD"]) ?? ""
         return log.split(separator: "\n").map(String.init)
     }

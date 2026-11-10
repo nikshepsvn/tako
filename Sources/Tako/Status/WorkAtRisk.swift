@@ -58,6 +58,13 @@ struct WorkAtRisk: Equatable {
             onlyHere = onlyHere.map { $0.intersection(missing) } ?? missing
             if onlyHere?.isEmpty == true { return 0 }
         }
+        // Commits the worktree started with weren't made in it. Claude Code fetches the remote's
+        // default branch to start a worktree without moving any local ref, so until the next
+        // fetch those commits are in no safe ref here, and each one read as work about to be lost.
+        if let found = onlyHere, !found.isEmpty, let start = Review.worktreeStart(at: path),
+           let since = runGit(["-C", path, "rev-list", "\(start)..HEAD"]) {
+            onlyHere = found.intersection(since.split(separator: "\n"))
+        }
         return onlyHere?.count ?? 0
     }
 
@@ -87,10 +94,15 @@ struct WorkAtRisk: Equatable {
             refs.append(ref)
         }
         if let base, !base.isEmpty { add("refs/heads/\(base)") }
-        add(runGit(["-C", path, "symbolic-ref", "-q", "refs/remotes/origin/HEAD"]))
-        add("refs/heads/main")
-        add("refs/heads/master")
+        defaultRefs(at: path).forEach { add($0) }
         add(runGit(["-C", path, "rev-parse", "--symbolic-full-name", "@{upstream}"]))
         return refs
+    }
+
+    /// The repository's default branch wherever it can be found: origin/HEAD, local main, master.
+    static func defaultRefs(at path: String) -> [String] {
+        ([runGit(["-C", path, "symbolic-ref", "-q", "refs/remotes/origin/HEAD"])] + ["refs/heads/main", "refs/heads/master"])
+            .compactMap { $0 }
+            .filter { !$0.isEmpty && runGit(["-C", path, "rev-parse", "--verify", "--quiet", $0]) != nil }
     }
 }
